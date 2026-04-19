@@ -1,4 +1,4 @@
-from typing import TypedDict, Optional
+from typing import Any, NotRequired, Optional, TypedDict
 
 class PaperState(TypedDict):
     filename: str
@@ -10,3 +10,4 @@ class PaperState(TypedDict):
     relevance_reason: str
     fit: bool
     error: Optional[str]
+    trace: NotRequired[list[dict[str, Any]]]

@@ -4,6 +4,7 @@ load_dotenv()
 
 import streamlit as st
 from utils.pdf_reader import extract_text_from_pdf
+from utils.trace_store import persist_pipeline_run
 from graph.pipeline import pipeline
 
 # ── Page config ──────────────────────────────────────────────────────────────
@@ -155,9 +156,23 @@ if uploaded_files and st.session_state.research_focus:
                         "relevance_reason": "",
                         "fit": False,
                         "error": None,
+                        "trace": [],
                     }
 
                     result = pipeline.invoke(initial_state)
+                    focus = st.session_state.get("research_focus") or ""
+                    trace_id = persist_pipeline_run(
+                        {
+                            "filename": result.get("filename"),
+                            "research_focus": focus,
+                            "trace": result.get("trace") or [],
+                            "relevance_score": result.get("relevance_score"),
+                            "fit": result.get("fit"),
+                            "error": result.get("error"),
+                        }
+                    )
+                    if trace_id:
+                        result["trace_id"] = trace_id
                     st.session_state.results.append(result)
 
                 except Exception as e:
@@ -223,7 +238,9 @@ if st.session_state.results:
 
             st.markdown("---")
 
-            tab1, tab2, tab3 = st.tabs(["📝 Summary", "🔑 Key Findings", "🔧 Methodology"])
+            tab1, tab2, tab3, tab4 = st.tabs(
+                ["📝 Summary", "🔑 Key Findings", "🔧 Methodology", "🧭 Agent trace"]
+            )
 
             with tab1:
                 st.markdown(result.get("summary", "Not available."))
@@ -233,3 +250,29 @@ if st.session_state.results:
 
             with tab3:
                 st.markdown(result.get("methodology", "Not available."))
+
+            with tab4:
+                trace = result.get("trace") or []
+                oid = result.get("trace_id")
+                if oid:
+                    st.caption(f"Stored run id: `{oid}` (MongoDB)")
+                if not trace:
+                    st.info("No trace entries for this run.")
+                else:
+                    total_ms = sum(
+                        s.get("duration_ms") or 0 for s in trace if s.get("duration_ms") is not None
+                    )
+                    if total_ms > 0:
+                        st.caption(f"LLM-timed steps total ≈ **{total_ms:.0f} ms**")
+
+                    for i, step in enumerate(trace, start=1):
+                        node = step.get("node", "?")
+                        st.markdown(f"**Step {i} — `{node}`**")
+                        st.markdown(step.get("contribution", ""))
+                        det = step.get("detail") or ""
+                        if det:
+                            st.caption(det)
+                        dm = step.get("duration_ms")
+                        if dm is not None:
+                            st.caption(f"⏱ {dm:.0f} ms")
+                        st.markdown("---")
