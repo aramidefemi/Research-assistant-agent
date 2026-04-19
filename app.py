@@ -1,3 +1,7 @@
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import streamlit as st
 from utils.pdf_reader import extract_text_from_pdf
 from graph.pipeline import pipeline

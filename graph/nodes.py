@@ -1,16 +1,7 @@
-from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage
 from graph.state import PaperState
 from utils.prompts import SUMMARISE_PROMPT, EVALUATE_PROMPT
+from utils.gemini_llm import invoke_gemini_prompt
 import streamlit as st
-
-def get_llm():
-    """Initialise Claude via LangChain."""
-    return ChatAnthropic(
-        model="claude-opus-4-5",
-        anthropic_api_key=st.secrets["ANTHROPIC_API_KEY"],
-        max_tokens=2000,
-    )
 
 def extract_node(state: PaperState) -> PaperState:
     """Node 1: Text is already extracted before the graph runs — just validate."""
@@ -24,10 +15,8 @@ def summarise_node(state: PaperState) -> PaperState:
         return state
 
     try:
-        llm = get_llm()
         prompt = SUMMARISE_PROMPT.format(pdf_text=state["pdf_text"])
-        response = llm.invoke([HumanMessage(content=prompt)])
-        content = response.content
+        content = invoke_gemini_prompt(prompt)
 
         # Parse structured response
         summary = _extract_section(content, "SUMMARY:", "KEY_FINDINGS:")
@@ -49,7 +38,6 @@ def evaluate_node(state: PaperState) -> PaperState:
         return state
 
     try:
-        llm = get_llm()
         research_focus = st.session_state.get("research_focus", "General ML and AI research")
 
         prompt = EVALUATE_PROMPT.format(
@@ -58,8 +46,7 @@ def evaluate_node(state: PaperState) -> PaperState:
             key_findings=state["key_findings"],
             methodology=state["methodology"],
         )
-        response = llm.invoke([HumanMessage(content=prompt)])
-        content = response.content
+        content = invoke_gemini_prompt(prompt)
 
         # Parse score
         score = 0.0
