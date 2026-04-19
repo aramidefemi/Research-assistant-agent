@@ -2,6 +2,14 @@
 
 An AI assistant built with **LangGraph** and **Streamlit**. It evaluates academic PDFs against your research focus using a **three-step graph** (extract → summarise → evaluate), not a single prompt.
 
+### Agent architecture (preview)
+
+PDF text is validated, then **summarise** and **evaluate** call Gemini in sequence; state and per-node traces live on `PaperState`. Full detail: **[docs/agent-architecture.md](docs/agent-architecture.md)**.
+
+```
+PDF → extract → summarise → evaluate → END
+```
+
 ## What it does
 
 1. Set your research focus in the sidebar.
@@ -19,6 +27,8 @@ If **`MONGODB_URI`** is set (`.env` or Streamlit secrets), each completed run is
 
 ```
 research-assistant/
+├── docs/
+│   └── agent-architecture.md  # LangGraph nodes, state, tracing
 ├── app.py                   # Streamlit UI
 ├── graph/
 │   ├── state.py             # LangGraph state (includes optional trace)

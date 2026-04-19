@@ -19,7 +19,7 @@ METHODOLOGY:
 <methodology description here>
 """
 
-EVALUATE_PROMPT = """You are a research relevance evaluator.
+EVALUATE_SCORE_FIT_PROMPT = """You are a research relevance evaluator.
 
 Research Focus:
 {research_focus}
@@ -33,10 +33,33 @@ Key Findings:
 Methodology:
 {methodology}
 
-Based on the research focus, evaluate how relevant this paper is.
+Based on the research focus, assign a relevance score and fit verdict only.
 
 Respond in this exact format:
 SCORE: <a number from 0.0 to 1.0>
 FIT: <YES or NO — YES if score >= 0.6>
-REASON: <2-3 sentence explanation of why this paper does or doesn't fit the research focus>
+"""
+
+EVALUATE_REASON_PROMPT = """You are a research relevance evaluator.
+
+Research Focus:
+{research_focus}
+
+Paper Summary:
+{summary}
+
+Key Findings:
+{key_findings}
+
+Methodology:
+{methodology}
+
+Already determined (do not contradict):
+SCORE: {score:.2f}
+FIT: {fit_label}
+
+Explain briefly why this paper does or does not fit the research focus.
+
+Respond in this exact format:
+REASON: <2-3 sentences>
 """

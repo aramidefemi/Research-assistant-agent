@@ -7,6 +7,43 @@ from utils.pdf_reader import extract_text_from_pdf
 from utils.trace_store import persist_pipeline_run
 from graph.pipeline import pipeline
 
+
+def write_trace_steps(trace: list, *, idle_msg: str | None = "No trace entries for this run.") -> None:
+    """Render agent trace steps into the current Streamlit container."""
+    if not trace:
+        if idle_msg:
+            st.info(idle_msg)
+        return
+    total_ms = sum(s.get("duration_ms") or 0 for s in trace if s.get("duration_ms") is not None)
+    if total_ms > 0:
+        st.caption(f"LLM-timed steps total ≈ **{total_ms:.0f} ms**")
+    for i, step in enumerate(trace, start=1):
+        node = step.get("node", "?")
+        st.markdown(f"**Step {i} — `{node}`**")
+        st.markdown(step.get("contribution", ""))
+        det = step.get("detail") or ""
+        if det:
+            st.caption(det)
+        dm = step.get("duration_ms")
+        if dm is not None:
+            st.caption(f"⏱ {dm:.0f} ms")
+        st.markdown("---")
+
+
+def run_pipeline_stream(initial_state: dict, live_placeholder, filename: str) -> dict:
+    """Run the graph with streaming; updates `live_placeholder` after each node completes."""
+    result = initial_state
+    with live_placeholder.container():
+        st.markdown(f"#### 🧭 Live agent trace — `{filename}`")
+        st.caption("Starting pipeline…")
+    for chunk in pipeline.stream(initial_state, stream_mode="values"):
+        result = chunk
+        with live_placeholder.container():
+            st.markdown(f"#### 🧭 Live agent trace — `{filename}`")
+            write_trace_steps(chunk.get("trace") or [])
+    return result
+
+
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Research Assistant",
@@ -86,6 +123,8 @@ if "results" not in st.session_state:
     st.session_state.results = []
 if "research_focus" not in st.session_state:
     st.session_state.research_focus = ""
+if "evaluation_depth" not in st.session_state:
+    st.session_state.evaluation_depth = "full"
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -102,6 +141,16 @@ with st.sidebar:
     )
     if research_focus:
         st.session_state.research_focus = research_focus
+
+    st.markdown('<p class="sidebar-header">Evaluation</p>', unsafe_allow_html=True)
+    st.radio(
+        "Evaluation depth",
+        ["full", "quick"],
+        format_func=lambda x: (
+            "Full — score, fit, and why (2 LLM steps)" if x == "full" else "Quick — score & fit only (1 step)"
+        ),
+        key="evaluation_depth",
+    )
 
     st.markdown("---")
 
@@ -159,7 +208,17 @@ if uploaded_files and st.session_state.research_focus:
                         "trace": [],
                     }
 
-                    result = pipeline.invoke(initial_state)
+                    with st.status(
+                        f"Agent pipeline — `{uploaded_file.name}`",
+                        expanded=True,
+                    ) as run_status:
+                        live_trace = st.empty()
+                        result = run_pipeline_stream(initial_state, live_trace, uploaded_file.name)
+                        run_status.update(
+                            label=f"✅ Finished `{uploaded_file.name}`",
+                            state="complete",
+                            expanded=False,
+                        )
                     focus = st.session_state.get("research_focus") or ""
                     trace_id = persist_pipeline_run(
                         {
@@ -256,23 +315,4 @@ if st.session_state.results:
                 oid = result.get("trace_id")
                 if oid:
                     st.caption(f"Stored run id: `{oid}` (MongoDB)")
-                if not trace:
-                    st.info("No trace entries for this run.")
-                else:
-                    total_ms = sum(
-                        s.get("duration_ms") or 0 for s in trace if s.get("duration_ms") is not None
-                    )
-                    if total_ms > 0:
-                        st.caption(f"LLM-timed steps total ≈ **{total_ms:.0f} ms**")
-
-                    for i, step in enumerate(trace, start=1):
-                        node = step.get("node", "?")
-                        st.markdown(f"**Step {i} — `{node}`**")
-                        st.markdown(step.get("contribution", ""))
-                        det = step.get("detail") or ""
-                        if det:
-                            st.caption(det)
-                        dm = step.get("duration_ms")
-                        if dm is not None:
-                            st.caption(f"⏱ {dm:.0f} ms")
-                        st.markdown("---")
+                write_trace_steps(trace)
