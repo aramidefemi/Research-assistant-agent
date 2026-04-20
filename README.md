@@ -65,13 +65,25 @@ Configure credentials using either **environment variables** (e.g. copy `.env.ex
 | `GEMINI_API_KEY` | Required — primary Google AI key |
 | `GEMINI_MODEL` | Optional — defaults to `gemini-2.0-flash` |
 | `GEMINI_API_KEY_ALT` | Optional — used if the primary key hits quota |
-| `OPENROUTER_API_KEY` | Recommended — enables OpenRouter as primary provider |
-| `OPENROUTER_MODEL` | Recommended — OpenRouter model slug used as primary provider |
+| `LLM_PROVIDER` | Optional — explicit provider switch: `openai` (aliases: `openai_compatible`, `nvidia`), `openrouter`, `gemini` |
+| `OPENROUTER_API_KEY` | Optional — OpenRouter API key |
+| `OPENROUTER_MODEL` | Optional — OpenRouter model slug |
 | `OPENROUTER_API_URL` | Optional — defaults to `https://openrouter.ai/api/v1/chat/completions` |
 | `OPENROUTER_SITE_URL` | Optional — sent as `HTTP-Referer` header for OpenRouter analytics |
 | `OPENROUTER_APP_NAME` | Optional — sent as `X-Title` header |
 | `OPENROUTER_TIMEOUT_SECONDS` | Optional — request timeout, defaults to `60` |
+| `OPENAI_API_KEY` | Optional — required when `LLM_PROVIDER=openai` |
+| `OPENAI_BASE_URL` | Optional — set for OpenAI-compatible endpoints (e.g. NVIDIA integrate API) |
+| `OPENAI_MODEL` | Optional — required when `LLM_PROVIDER=openai` |
+| `OPENAI_TEMPERATURE` | Optional — defaults to `1` |
+| `OPENAI_TOP_P` | Optional — defaults to `0.95` |
+| `OPENAI_MAX_TOKENS` | Optional — defaults to `4096` |
+| `OPENAI_TIMEOUT_SECONDS` | Optional — defaults to `60` |
+| `OPENAI_ENABLE_THINKING` | Optional — `true/false`, defaults to `false` |
+| `OPENAI_REASONING_BUDGET` | Optional — used when `OPENAI_ENABLE_THINKING=true` |
 | `MONGODB_URI` | Optional — persists pipeline traces for demos / auditing |
+
+If `LLM_PROVIDER` is unset, runtime keeps legacy auto mode: OpenRouter-first (if configured), then Gemini fallback.
 
 Run:
 
@@ -89,12 +101,22 @@ streamlit run app.py
    GEMINI_API_KEY = "..."
    GEMINI_MODEL = "gemini-2.0-flash"
    GEMINI_API_KEY_ALT = ""
+   LLM_PROVIDER = ""
    OPENROUTER_API_KEY = ""
    OPENROUTER_MODEL = ""
    OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
    OPENROUTER_SITE_URL = "http://localhost"
    OPENROUTER_APP_NAME = "research-assistant"
    OPENROUTER_TIMEOUT_SECONDS = "60"
+   OPENAI_API_KEY = ""
+   OPENAI_BASE_URL = ""
+   OPENAI_MODEL = ""
+   OPENAI_TEMPERATURE = "1"
+   OPENAI_TOP_P = "0.95"
+   OPENAI_MAX_TOKENS = "16384"
+   OPENAI_TIMEOUT_SECONDS = "60"
+   OPENAI_ENABLE_THINKING = "true"
+   OPENAI_REASONING_BUDGET = "16384"
    MONGODB_URI = ""
    ```
 
