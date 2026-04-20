@@ -1,4 +1,4 @@
-"""Centralized LLM invocation: Gemini first, OpenRouter fallback on quota/rate limits."""
+"""Centralized LLM invocation: OpenRouter-first with Gemini fallback."""
 from __future__ import annotations
 
 import json
@@ -191,9 +191,19 @@ def _invoke_openrouter(prompt: str) -> str:
 
 
 def invoke_gemini_prompt(prompt: str) -> str:
+    openrouter_error: Exception | None = None
+    if _has_openrouter():
+        try:
+            return _invoke_openrouter(prompt)
+        except Exception as e:
+            openrouter_error = e
     try:
         return _invoke_gemini(prompt)
     except Exception as e:
         if _is_quota_exceeded(e) and _has_openrouter():
             return _invoke_openrouter(prompt)
+        if openrouter_error is not None:
+            raise RuntimeError(
+                f"OpenRouter failed first ({openrouter_error}); Gemini fallback also failed ({e})."
+            ) from e
         raise

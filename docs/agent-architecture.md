@@ -92,7 +92,7 @@ flowchart LR
 - **PDF fields:** `pdf_text`, `summary`, `key_findings`, `methodology`, `relevance_score`, `fit`, `relevance_reason`
 - **Discovery fields:** `topic`, `discovery_query`, `discovery_cursor`, `discovery_round`, `discovery_batch_size`, `max_discovery_rounds`, `target_qualified_count`, `discovered_candidates`, `candidate_queue`, `current_candidate`, `candidate_score`, `candidate_fit`, `candidate_quality`, `candidate_reason`, `evaluated_candidates`, `qualified_works`
 
-## Rate-limit strategy (Gemini + OpenRouter fallback)
+## Provider strategy (OpenRouter + Gemini fallback)
 
 All LLM calls go through `utils/gemini_llm.py` (`invoke_gemini_prompt`) with centralized controls:
 
@@ -100,7 +100,8 @@ All LLM calls go through `utils/gemini_llm.py` (`invoke_gemini_prompt`) with cen
 - Retry count (`GEMINI_RETRY_COUNT`)
 - Exponential backoff base (`GEMINI_RETRY_BACKOFF_SECONDS`)
 - Quota/rate-limit detection + key fallback (`GEMINI_API_KEY_ALT`)
-- Optional provider fallback to OpenRouter when Gemini quota/rate limits are exhausted (`OPENROUTER_API_KEY` + `OPENROUTER_MODEL`)
+- OpenRouter is used first when configured (`OPENROUTER_API_KEY` + `OPENROUTER_MODEL`)
+- Gemini remains available as fallback (`GEMINI_API_KEY`, optional `GEMINI_API_KEY_ALT`)
 
 This keeps node work small, prevents bursty per-node call spikes, and lets the orchestrator combine results safely under free-tier limits.
 

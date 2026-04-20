@@ -43,7 +43,7 @@ research-assistant/
 ├── utils/
 │   ├── pdf_reader.py        # PDF text extraction
 │   ├── prompts.py           # LLM prompts
-│   ├── gemini_llm.py        # Gemini API + optional OpenRouter fallback
+│   ├── gemini_llm.py        # OpenRouter-first LLM adapter + Gemini fallback
 │   └── trace_store.py       # optional MongoDB persistence
 ├── .streamlit/
 │   └── secrets.toml         # local secrets (gitignored — do not commit)
@@ -65,8 +65,8 @@ Configure credentials using either **environment variables** (e.g. copy `.env.ex
 | `GEMINI_API_KEY` | Required — primary Google AI key |
 | `GEMINI_MODEL` | Optional — defaults to `gemini-2.0-flash` |
 | `GEMINI_API_KEY_ALT` | Optional — used if the primary key hits quota |
-| `OPENROUTER_API_KEY` | Optional — enables provider fallback when Gemini quota is exhausted |
-| `OPENROUTER_MODEL` | Optional — OpenRouter model slug (required when fallback is enabled) |
+| `OPENROUTER_API_KEY` | Recommended — enables OpenRouter as primary provider |
+| `OPENROUTER_MODEL` | Recommended — OpenRouter model slug used as primary provider |
 | `OPENROUTER_API_URL` | Optional — defaults to `https://openrouter.ai/api/v1/chat/completions` |
 | `OPENROUTER_SITE_URL` | Optional — sent as `HTTP-Referer` header for OpenRouter analytics |
 | `OPENROUTER_APP_NAME` | Optional — sent as `X-Title` header |
