@@ -471,10 +471,12 @@ def discovery_quality_reason_node(state: PaperState) -> PaperState:
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         quality = _parse_yes_no(content, "QUALITY:")
         reason = _parse_reason(content)
+        source_profile = _parse_source_profile(content)
         s2: PaperState = {
             **state,
             "candidate_quality": quality,
             "candidate_reason": reason,
+            "candidate_source_profile": source_profile,
             "candidate_eval_duration_ms": elapsed_ms,
         }
         return append_trace(
@@ -487,6 +489,7 @@ def discovery_quality_reason_node(state: PaperState) -> PaperState:
                 "candidate_title": candidate.get("title", ""),
                 "quality": quality,
                 "reason": reason,
+                "source_profile": source_profile,
             },
         )
     except Exception as e:
@@ -512,12 +515,14 @@ def discovery_finalize_candidate_node(state: PaperState) -> PaperState:
     fit = bool(state.get("candidate_fit"))
     quality = bool(state.get("candidate_quality"))
     reason = str(state.get("candidate_reason") or "")
+    source_profile = dict(state.get("candidate_source_profile") or {})
     row = {
         **candidate,
         "score": score,
         "fit": fit,
         "quality": quality,
         "reason": reason,
+        "source_profile": source_profile,
         "eval_duration_ms": state.get("candidate_eval_duration_ms"),
     }
     evaluated.append(row)
@@ -530,6 +535,7 @@ def discovery_finalize_candidate_node(state: PaperState) -> PaperState:
         "candidate_fit": False,
         "candidate_quality": False,
         "candidate_reason": "",
+        "candidate_source_profile": {},
         "candidate_eval_duration_ms": None,
         "evaluated_candidates": evaluated,
         "qualified_works": selected,
@@ -671,3 +677,32 @@ def _parse_discovery_rank(content: str) -> tuple[list[int], bool, str]:
         seen.add(idx)
         deduped.append(idx)
     return deduped, refetch, reason
+
+
+def _parse_source_profile(content: str) -> dict[str, str]:
+    keys = {
+        "AUTHORS": "authors",
+        "DATE_OF_RESEARCH": "date_of_research",
+        "COUNTRY_OF_ORIGIN": "country_of_origin",
+        "PURPOSE_AIMS": "purpose_aims",
+        "RESEARCH_QUESTIONS": "research_questions",
+        "DATA_USED_METHOD_COLLECTION_SAMPLE_SIZE": "data_used_method_collection_sample_size",
+        "METHODS_TOOLS_USED": "methods_tools_used",
+        "METHOD_AND_DATA_COLLECTION_LIMITATIONS": "method_and_data_collection_limitations",
+        "RESULTS": "results",
+        "CONTRIBUTION": "contribution",
+        "LIMITATION_OF_RESEARCH_OUTCOMES": "limitation_of_research_outcomes",
+        "FUTURE_PERSPECTIVES": "future_perspectives",
+    }
+    profile: dict[str, str] = {v: "N/A" for v in keys.values()}
+    for raw_line in content.split("\n"):
+        line = raw_line.strip()
+        if ":" not in line:
+            continue
+        lhs, rhs = line.split(":", 1)
+        key = lhs.strip().upper()
+        mapped = keys.get(key)
+        if mapped:
+            value = rhs.strip()
+            profile[mapped] = value or "N/A"
+    return profile

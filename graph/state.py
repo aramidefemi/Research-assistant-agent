@@ -27,4 +27,5 @@ class PaperState(TypedDict):
     candidate_fit: NotRequired[bool]
     candidate_quality: NotRequired[bool]
     candidate_reason: NotRequired[str]
+    candidate_source_profile: NotRequired[dict[str, str]]
     candidate_eval_duration_ms: NotRequired[float | None]

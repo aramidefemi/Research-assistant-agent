@@ -8,6 +8,21 @@ from utils.pdf_reader import extract_text_from_pdf
 from utils.trace_store import persist_pipeline_run
 from graph.pipeline import pipeline, discovery_pipeline
 
+SOURCE_MATRIX_FIELDS = [
+    ("authors", "Author/s"),
+    ("date_of_research", "Date of research"),
+    ("country_of_origin", "Country of origin"),
+    ("purpose_aims", "Purpose/Aims"),
+    ("research_questions", "Research questions"),
+    ("data_used_method_collection_sample_size", "Data used / method of data collection / sample size"),
+    ("methods_tools_used", "Methods/tools used"),
+    ("method_and_data_collection_limitations", "Method and data collection limitations"),
+    ("results", "Results"),
+    ("contribution", "Contribution"),
+    ("limitation_of_research_outcomes", "Limitation of research outcomes"),
+    ("future_perspectives", "Future perspectives"),
+]
+
 
 def _render_stage_result(value: Any, key: str, *, depth: int = 0) -> None:
     if depth > 3:
@@ -60,6 +75,18 @@ def write_trace_steps(trace: list, *, idle_msg: str | None = "No trace entries f
             if result:
                 with st.expander("Stage result", expanded=False):
                     _render_stage_result(result, "")
+
+
+def _render_source_matrix(profile: dict[str, str]) -> None:
+    rows: list[dict[str, str]] = []
+    for key, label in SOURCE_MATRIX_FIELDS:
+        rows.append(
+            {
+                "Column": label,
+                "Extracted value": (profile.get(key) or "N/A"),
+            }
+        )
+    st.table(rows)
 
 
 def run_pipeline_stream(graph, initial_state: dict, live_placeholder, run_label: str) -> dict:
@@ -339,6 +366,7 @@ else:
             "qualified_works": [],
             "evaluated_candidates": [],
             "discovered_candidates": [],
+            "candidate_source_profile": {},
         }
         with st.status("Discovery pipeline", expanded=True) as run_status:
             live_trace = st.empty()
@@ -465,8 +493,8 @@ if st.session_state.discovery_results:
                 with c2:
                     st.markdown(f"**Why this qualified:** {item.get('reason', 'No rationale returned.')}")
 
-                tab_overview, tab_abstract, tab_links = st.tabs(
-                    ["📌 Overview", "🧾 Abstract", "🔗 Sources"]
+                tab_overview, tab_matrix, tab_abstract, tab_links = st.tabs(
+                    ["📌 Overview", "📊 Evidence Matrix", "🧾 Abstract", "🔗 Sources"]
                 )
                 with tab_overview:
                     st.markdown(f"**Venue:** {item.get('venue', 'Unknown venue')}")
@@ -474,6 +502,8 @@ if st.session_state.discovery_results:
                     st.markdown(f"**Citations:** {item.get('cited_by_count', 0)}")
                     st.markdown(f"**Topical fit:** {'YES' if fit else 'NO'}")
                     st.markdown(f"**Scholarly quality:** {'YES' if quality else 'NO'}")
+                with tab_matrix:
+                    _render_source_matrix(dict(item.get("source_profile") or {}))
                 with tab_abstract:
                     st.markdown(item.get("abstract") or "Abstract not available.")
                 with tab_links:
