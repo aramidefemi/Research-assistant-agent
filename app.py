@@ -211,23 +211,12 @@ if "results" not in st.session_state:
     st.session_state.results = []
 if "research_focus" not in st.session_state:
     st.session_state.research_focus = ""
-if "evaluation_depth" not in st.session_state:
-    st.session_state.evaluation_depth = "full"
 if "discovery_results" not in st.session_state:
     st.session_state.discovery_results = []
 
 # ── Main area ─────────────────────────────────────────────────────────────────
 st.markdown("## Research Agent")
 st.markdown("Start with your research topic, then either upload papers to score or let the agent hunt for journals.")
-
-st.radio(
-    "Evaluation depth",
-    ["full", "quick"],
-    format_func=lambda x: (
-        "Full — score, fit, and why (2 LLM steps)" if x == "full" else "Quick — score & fit only (1 step)"
-    ),
-    key="evaluation_depth",
-)
 
 if st.session_state.results or st.session_state.discovery_results:
     total = len(st.session_state.results)
