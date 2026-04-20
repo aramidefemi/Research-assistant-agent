@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 
 from dotenv import load_dotenv
 
 _ENV_LOADED = False
+_RATE_LOCK = threading.Lock()
+_LAST_CALL_AT = 0.0
 
 
 def _ensure_dotenv() -> None:
@@ -57,6 +61,36 @@ def _key_chain() -> list[str]:
     return [k for k in keys if k]
 
 
+def _config_float(key: str, default: float) -> float:
+    raw = _config_str(key)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _config_int(key: str, default: int) -> int:
+    raw = _config_str(key)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _wait_for_rate_slot(min_interval_s: float) -> None:
+    global _LAST_CALL_AT
+    with _RATE_LOCK:
+        now = time.time()
+        wait_s = (_LAST_CALL_AT + min_interval_s) - now
+        if wait_s > 0:
+            time.sleep(wait_s)
+        _LAST_CALL_AT = time.time()
+
+
 def invoke_gemini_prompt(prompt: str) -> str:
     import google.generativeai as genai
 
@@ -66,23 +100,33 @@ def invoke_gemini_prompt(prompt: str) -> str:
             "Set GEMINI_API_KEY (and optionally GEMINI_API_KEY_ALT) in .env or .streamlit/secrets.toml"
         )
     model_name = _config_str("GEMINI_MODEL") or "gemini-2.0-flash"
+    min_interval_s = _config_float("GEMINI_MIN_INTERVAL_SECONDS", 4.0)
+    retry_count = _config_int("GEMINI_RETRY_COUNT", 3)
+    backoff_s = _config_float("GEMINI_RETRY_BACKOFF_SECONDS", 3.0)
 
     last: BaseException | None = None
     for i, api_key in enumerate(keys):
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(model_name)
-        try:
-            resp = model.generate_content(prompt)
+        for attempt in range(retry_count):
             try:
-                text = (resp.text or "").strip()
-            except ValueError as ve:
-                raise RuntimeError("Gemini returned no usable text (blocked or empty).") from ve
-            if not text:
-                raise RuntimeError("Gemini returned an empty response.")
-            return text
-        except Exception as e:
-            last = e
-            if not _is_quota_exceeded(e) or i == len(keys) - 1:
-                raise
+                _wait_for_rate_slot(min_interval_s)
+                resp = model.generate_content(prompt)
+                try:
+                    text = (resp.text or "").strip()
+                except ValueError as ve:
+                    raise RuntimeError("Gemini returned no usable text (blocked or empty).") from ve
+                if not text:
+                    raise RuntimeError("Gemini returned an empty response.")
+                return text
+            except Exception as e:
+                last = e
+                if not _is_quota_exceeded(e):
+                    raise
+                if attempt < retry_count - 1:
+                    time.sleep(backoff_s * (2**attempt))
+                    continue
+                if i == len(keys) - 1:
+                    raise
     assert last is not None
     raise last

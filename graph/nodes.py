@@ -10,7 +10,8 @@ from utils.prompts import (
     SUMMARISE_PROMPT,
     EVALUATE_SCORE_FIT_PROMPT,
     EVALUATE_REASON_PROMPT,
-    DISCOVERY_EVALUATE_PROMPT,
+    DISCOVERY_SCORE_FIT_PROMPT,
+    DISCOVERY_QUALITY_REASON_PROMPT,
 )
 from utils.gemini_llm import invoke_gemini_prompt
 from utils.journal_search import search_journals
@@ -251,67 +252,226 @@ def discovery_search_node(state: PaperState) -> PaperState:
         )
 
 
-def discovery_evaluate_node(state: PaperState) -> PaperState:
-    """Evaluate candidate quality/relevance and keep qualified works."""
+def discovery_prepare_candidates_node(state: PaperState) -> PaperState:
+    """Prepare queue for one-candidate-at-a-time evaluation."""
+    if state.get("error"):
+        return state
+    candidates = list(state.get("discovered_candidates") or [])
+    s2: PaperState = {
+        **state,
+        "candidate_queue": candidates,
+        "current_candidate": None,
+    }
+    return append_trace(
+        s2,
+        "discovery_prepare_candidates",
+        "Prepared candidate queue for strict per-candidate evaluation nodes.",
+        detail=f"queued={len(candidates)}",
+    )
+
+
+def discovery_pick_candidate_node(state: PaperState) -> PaperState:
+    """Pick next candidate from queue."""
+    if state.get("error"):
+        return state
+    queue = list(state.get("candidate_queue") or [])
+    current = queue.pop(0) if queue else None
+    s2: PaperState = {
+        **state,
+        "candidate_queue": queue,
+        "current_candidate": current,
+    }
+    if not current:
+        return append_trace(
+            s2,
+            "discovery_pick_candidate",
+            "No more candidates in current round queue.",
+        )
+    return append_trace(
+        s2,
+        "discovery_pick_candidate",
+        "Picked one candidate for evaluation.",
+        detail=current.get("title", "")[:120],
+    )
+
+
+def discovery_score_fit_node(state: PaperState) -> PaperState:
+    """Evaluate score + fit for current candidate."""
     if state.get("error"):
         return state
 
     topic = (state.get("topic") or "").strip()
-    candidates = list(state.get("discovered_candidates") or [])
-    selected = list(state.get("qualified_works") or [])
-    evaluated = list(state.get("evaluated_candidates") or [])
+    candidate = state.get("current_candidate")
+    if not candidate:
+        return state
 
     try:
-        for cand in candidates:
-            if len(selected) >= int(state.get("target_qualified_count") or 2):
-                break
-            prompt = DISCOVERY_EVALUATE_PROMPT.format(
-                topic=topic,
-                title=cand.get("title", ""),
-                abstract=cand.get("abstract", ""),
-                venue=cand.get("venue", ""),
-                year=cand.get("year", ""),
-                cited_by_count=cand.get("cited_by_count", 0),
-            )
-            t0 = time.perf_counter()
-            content = invoke_gemini_prompt(prompt)
-            elapsed_ms = (time.perf_counter() - t0) * 1000.0
-            score, fit = _parse_score_fit(content)
-            quality = _parse_yes_no(content, "QUALITY:")
-            reason = _parse_reason(content)
-            row = {
-                **cand,
-                "score": score,
-                "fit": fit,
-                "quality": quality,
-                "reason": reason,
-                "eval_duration_ms": elapsed_ms,
-            }
-            evaluated.append(row)
-            if fit and quality and score >= 0.7:
-                selected.append(row)
+        prompt = DISCOVERY_SCORE_FIT_PROMPT.format(
+            topic=topic,
+            title=candidate.get("title", ""),
+            abstract=candidate.get("abstract", ""),
+            venue=candidate.get("venue", ""),
+            year=candidate.get("year", ""),
+            cited_by_count=candidate.get("cited_by_count", 0),
+        )
+        t0 = time.perf_counter()
+        content = invoke_gemini_prompt(prompt)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        score, fit = _parse_score_fit(content)
         s2: PaperState = {
             **state,
-            "evaluated_candidates": evaluated,
-            "qualified_works": selected,
+            "candidate_score": score,
+            "candidate_fit": fit,
         }
         return append_trace(
             s2,
-            "discovery_evaluate",
-            "Evaluated candidate journals and retained only strong fits.",
-            detail=f"qualified={len(selected)} / target={state.get('target_qualified_count', 2)}",
+            "discovery_score_fit",
+            f"Scored current candidate: SCORE={score:.2f}, FIT={'YES' if fit else 'NO'}.",
+            duration_ms=elapsed_ms,
         )
     except Exception as e:
         return append_trace(
-            {**state, "error": f"Discovery evaluation failed: {str(e)}"},
-            "discovery_evaluate",
-            "Candidate evaluation failed.",
+            {**state, "error": f"Discovery score/fit failed: {str(e)}"},
+            "discovery_score_fit",
+            "Candidate score/fit evaluation failed.",
             detail=str(e),
         )
 
 
+def discovery_quality_reason_node(state: PaperState) -> PaperState:
+    """Evaluate quality + reason for current candidate."""
+    if state.get("error"):
+        return state
+
+    topic = (state.get("topic") or "").strip()
+    candidate = state.get("current_candidate")
+    if not candidate:
+        return state
+
+    try:
+        score = float(state.get("candidate_score") or 0.0)
+        fit = bool(state.get("candidate_fit"))
+        prompt = DISCOVERY_QUALITY_REASON_PROMPT.format(
+            topic=topic,
+            title=candidate.get("title", ""),
+            abstract=candidate.get("abstract", ""),
+            venue=candidate.get("venue", ""),
+            year=candidate.get("year", ""),
+            cited_by_count=candidate.get("cited_by_count", 0),
+            score=score,
+            fit_label="YES" if fit else "NO",
+        )
+        t0 = time.perf_counter()
+        content = invoke_gemini_prompt(prompt)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        quality = _parse_yes_no(content, "QUALITY:")
+        reason = _parse_reason(content)
+        s2: PaperState = {
+            **state,
+            "candidate_quality": quality,
+            "candidate_reason": reason,
+            "candidate_eval_duration_ms": elapsed_ms,
+        }
+        return append_trace(
+            s2,
+            "discovery_quality_reason",
+            f"Assessed scholarly quality: QUALITY={'YES' if quality else 'NO'}.",
+            detail=reason[:200],
+            duration_ms=elapsed_ms,
+        )
+    except Exception as e:
+        return append_trace(
+            {**state, "error": f"Discovery quality/reason failed: {str(e)}"},
+            "discovery_quality_reason",
+            "Candidate quality/reason evaluation failed.",
+            detail=str(e),
+        )
+
+
+def discovery_finalize_candidate_node(state: PaperState) -> PaperState:
+    """Aggregate current candidate result into evaluated/qualified lists."""
+    if state.get("error"):
+        return state
+    candidate = state.get("current_candidate")
+    if not candidate:
+        return state
+
+    evaluated = list(state.get("evaluated_candidates") or [])
+    selected = list(state.get("qualified_works") or [])
+    score = float(state.get("candidate_score") or 0.0)
+    fit = bool(state.get("candidate_fit"))
+    quality = bool(state.get("candidate_quality"))
+    reason = str(state.get("candidate_reason") or "")
+    row = {
+        **candidate,
+        "score": score,
+        "fit": fit,
+        "quality": quality,
+        "reason": reason,
+        "eval_duration_ms": state.get("candidate_eval_duration_ms"),
+    }
+    evaluated.append(row)
+    if fit and quality and score >= 0.7:
+        selected.append(row)
+    s2: PaperState = {
+        **state,
+        "current_candidate": None,
+        "candidate_score": 0.0,
+        "candidate_fit": False,
+        "candidate_quality": False,
+        "candidate_reason": "",
+        "candidate_eval_duration_ms": None,
+        "evaluated_candidates": evaluated,
+        "qualified_works": selected,
+    }
+    return append_trace(
+        s2,
+        "discovery_finalize_candidate",
+        "Merged candidate evaluation into orchestrator state.",
+        detail=f"qualified={len(selected)} / target={state.get('target_qualified_count', 2)}",
+    )
+
+
+def route_discovery_candidate(state: PaperState) -> Literal["score_fit", "round_check", "end"]:
+    """Route candidate loop: evaluate next candidate or move to round decision."""
+    if state.get("error"):
+        return "end"
+    qualified = len(state.get("qualified_works") or [])
+    target = int(state.get("target_qualified_count") or 2)
+    if qualified >= target:
+        return "end"
+    if state.get("current_candidate"):
+        return "score_fit"
+    if state.get("candidate_queue"):
+        return "score_fit"
+    return "round_check"
+
+
+def route_after_discovery_finalize(state: PaperState) -> Literal["pick", "round_check", "end"]:
+    """Route after finalizing one candidate."""
+    if state.get("error"):
+        return "end"
+    qualified = len(state.get("qualified_works") or [])
+    target = int(state.get("target_qualified_count") or 2)
+    if qualified >= target:
+        return "end"
+    if state.get("candidate_queue"):
+        return "pick"
+    return "round_check"
+
+
+def discovery_round_check_node(state: PaperState) -> PaperState:
+    """Trace boundary between candidate loop and round loop."""
+    return append_trace(
+        state,
+        "discovery_round_check",
+        "Finished this round queue; deciding whether to search another round.",
+        detail=f"round={state.get('discovery_round', 0)}",
+    )
+
+
 def route_discovery_loop(state: PaperState) -> Literal["search", "end"]:
-    """Loop until two qualified works are found or max rounds reached."""
+    """Round loop until target qualified works or max rounds reached."""
     if state.get("error"):
         return "end"
     qualified = len(state.get("qualified_works") or [])
@@ -323,6 +483,7 @@ def route_discovery_loop(state: PaperState) -> Literal["search", "end"]:
     if rounds >= max_rounds:
         return "end"
     return "search"
+
 
 def _extract_section(text: str, start_marker: str, end_marker: str) -> str:
     """Helper to extract a section between two markers."""

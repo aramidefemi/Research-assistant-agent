@@ -64,7 +64,7 @@ Respond in this exact format:
 REASON: <2-3 sentences>
 """
 
-DISCOVERY_EVALUATE_PROMPT = """You are qualifying candidate journal papers for a student research topic.
+DISCOVERY_SCORE_FIT_PROMPT = """You are qualifying candidate journal papers for a student research topic.
 
 Research Topic:
 {topic}
@@ -76,11 +76,32 @@ VENUE: {venue}
 YEAR: {year}
 CITED_BY_COUNT: {cited_by_count}
 
-Score the candidate on topic relevance and scholarly quality.
+Score the candidate only for topical relevance.
 
 Respond in this exact format:
 SCORE: <a number from 0.0 to 1.0>
 FIT: <YES or NO>
+"""
+
+DISCOVERY_QUALITY_REASON_PROMPT = """You are qualifying candidate journal papers for a student research topic.
+
+Research Topic:
+{topic}
+
+Candidate Paper Metadata:
+TITLE: {title}
+ABSTRACT: {abstract}
+VENUE: {venue}
+YEAR: {year}
+CITED_BY_COUNT: {cited_by_count}
+
+Already determined (do not contradict):
+SCORE: {score:.2f}
+FIT: {fit_label}
+
+Now assess only scholarly quality and explain briefly.
+
+Respond in this exact format:
 QUALITY: <YES or NO>
 REASON: <2-3 concise sentences>
 """
