@@ -13,6 +13,7 @@ from utils.prompts import (
     EVALUATE_REASON_PROMPT,
     DISCOVERY_SCORE_FIT_PROMPT,
     DISCOVERY_QUALITY_REASON_PROMPT,
+    DISCOVERY_SOURCE_PROFILE_PROMPT,
     DISCOVERY_ABSTRACT_TRIAGE_PROMPT,
 )
 from utils.gemini_llm import invoke_gemini_prompt
@@ -472,12 +473,10 @@ def discovery_quality_reason_node(state: PaperState) -> PaperState:
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         quality = _parse_yes_no(content, "QUALITY:")
         reason = _parse_reason(content)
-        source_profile = _parse_source_profile(content)
         s2: PaperState = {
             **state,
             "candidate_quality": quality,
             "candidate_reason": reason,
-            "candidate_source_profile": source_profile,
             "candidate_eval_duration_ms": elapsed_ms,
         }
         return append_trace(
@@ -490,7 +489,6 @@ def discovery_quality_reason_node(state: PaperState) -> PaperState:
                 "candidate_title": candidate.get("title", ""),
                 "quality": quality,
                 "reason": reason,
-                "source_profile": source_profile,
             },
         )
     except Exception as e:
@@ -498,6 +496,50 @@ def discovery_quality_reason_node(state: PaperState) -> PaperState:
             {**state, "error": f"Discovery quality/reason failed: {str(e)}"},
             "discovery_quality_reason",
             "Candidate quality/reason evaluation failed.",
+            detail=str(e),
+        )
+
+
+def discovery_source_profile_node(state: PaperState) -> PaperState:
+    """Extract structured evidence matrix fields for current candidate."""
+    if state.get("error"):
+        return state
+    candidate = state.get("current_candidate")
+    if not candidate:
+        return state
+    topic = (state.get("topic") or "").strip()
+    try:
+        prompt = DISCOVERY_SOURCE_PROFILE_PROMPT.format(
+            topic=topic,
+            title=candidate.get("title", ""),
+            abstract=candidate.get("abstract", ""),
+            venue=candidate.get("venue", ""),
+            year=candidate.get("year", ""),
+            cited_by_count=candidate.get("cited_by_count", 0),
+        )
+        t0 = time.perf_counter()
+        content = invoke_gemini_prompt(prompt)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        source_profile = _parse_source_profile(content)
+        s2: PaperState = {
+            **state,
+            "candidate_source_profile": source_profile,
+        }
+        return append_trace(
+            s2,
+            "discovery_source_profile",
+            "Extracted structured evidence matrix fields from candidate metadata.",
+            duration_ms=elapsed_ms,
+            result={
+                "candidate_title": candidate.get("title", ""),
+                "source_profile": source_profile,
+            },
+        )
+    except Exception as e:
+        return append_trace(
+            {**state, "error": f"Discovery source profile extraction failed: {str(e)}"},
+            "discovery_source_profile",
+            "Source profile extraction failed.",
             detail=str(e),
         )
 

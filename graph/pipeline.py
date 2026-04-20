@@ -14,6 +14,7 @@ from graph.nodes import (
     discovery_pick_candidate_node,
     discovery_score_fit_node,
     discovery_quality_reason_node,
+    discovery_source_profile_node,
     discovery_finalize_candidate_node,
     discovery_round_check_node,
     route_discovery_candidate,
@@ -55,6 +56,7 @@ def build_discovery_pipeline():
     graph.add_node("discovery_pick_candidate", discovery_pick_candidate_node)
     graph.add_node("discovery_score_fit", discovery_score_fit_node)
     graph.add_node("discovery_quality_reason", discovery_quality_reason_node)
+    graph.add_node("discovery_source_profile", discovery_source_profile_node)
     graph.add_node("discovery_finalize_candidate", discovery_finalize_candidate_node)
     graph.add_node("discovery_round_check", discovery_round_check_node)
 
@@ -73,7 +75,8 @@ def build_discovery_pipeline():
         },
     )
     graph.add_edge("discovery_score_fit", "discovery_quality_reason")
-    graph.add_edge("discovery_quality_reason", "discovery_finalize_candidate")
+    graph.add_edge("discovery_quality_reason", "discovery_source_profile")
+    graph.add_edge("discovery_source_profile", "discovery_finalize_candidate")
     graph.add_conditional_edges(
         "discovery_finalize_candidate",
         route_after_discovery_finalize,

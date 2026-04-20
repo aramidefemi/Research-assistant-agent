@@ -99,21 +99,33 @@ Already determined (do not contradict):
 SCORE: {score:.2f}
 FIT: {fit_label}
 
-Now do two things:
-1) Assess scholarly quality.
-2) Extract the evidence matrix fields listed below.
-
-Extraction policy:
-- Use only information supported by title/abstract/metadata provided above.
-- If unknown/unclear, return "N/A".
-
 Respond in this exact format:
 QUALITY: <YES or NO>
 REASON: <2-3 concise sentences>
-SOURCE_PROFILE_JSON: <minified JSON object, valid JSON only>
+"""
+
+DISCOVERY_SOURCE_PROFILE_PROMPT = """You are extracting a structured evidence matrix for a journal paper candidate.
+
+Research Topic:
+{topic}
+
+Candidate Paper Metadata:
+TITLE: {title}
+ABSTRACT: {abstract}
+VENUE: {venue}
+YEAR: {year}
+CITED_BY_COUNT: {cited_by_count}
+
+Extraction policy:
+- Use only information supported by metadata above.
+- If unknown/unclear, use "N/A".
+- Return valid JSON only.
+
+Respond in this exact format:
+SOURCE_PROFILE_JSON: <minified JSON object>
 
 The JSON object must contain exactly these keys:
-{
+{{
   "authors": "",
   "date_of_research": "",
   "country_of_origin": "",
@@ -126,7 +138,7 @@ The JSON object must contain exactly these keys:
   "contribution": "",
   "limitation_of_research_outcomes": "",
   "future_perspectives": ""
-}
+}}
 """
 
 DISCOVERY_ABSTRACT_TRIAGE_PROMPT = """You are triaging candidate journal papers for a student research topic.
