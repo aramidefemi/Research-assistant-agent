@@ -64,6 +64,48 @@ Respond in this exact format:
 REASON: <2-3 sentences>
 """
 
+EVALUATION_MATRIX_PROMPT = """You are extracting a structured evidence matrix for a research paper.
+
+Research Focus:
+{research_focus}
+
+Paper Summary:
+{summary}
+
+Key Findings:
+{key_findings}
+
+Methodology:
+{methodology}
+
+Paper Text Excerpt:
+{pdf_text_excerpt}
+
+Extraction policy:
+- Use only information supported by the provided content.
+- If unknown/unclear, use "N/A".
+- Return valid JSON only.
+
+Respond in this exact format:
+SOURCE_PROFILE_JSON: <minified JSON object>
+
+The JSON object must contain exactly these keys:
+{{
+  "authors": "",
+  "date_of_research": "",
+  "country_of_origin": "",
+  "purpose_aims": "",
+  "research_questions": "",
+  "data_used_method_collection_sample_size": "",
+  "methods_tools_used": "",
+  "method_and_data_collection_limitations": "",
+  "results": "",
+  "contribution": "",
+  "limitation_of_research_outcomes": "",
+  "future_perspectives": ""
+}}
+"""
+
 DISCOVERY_SCORE_FIT_PROMPT = """You are qualifying candidate journal papers for a student research topic.
 
 Research Topic:

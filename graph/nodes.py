@@ -11,6 +11,7 @@ from utils.prompts import (
     SUMMARISE_PROMPT,
     EVALUATE_SCORE_FIT_PROMPT,
     EVALUATE_REASON_PROMPT,
+    EVALUATION_MATRIX_PROMPT,
     DISCOVERY_SCORE_FIT_PROMPT,
     DISCOVERY_QUALITY_REASON_PROMPT,
     DISCOVERY_SOURCE_PROFILE_PROMPT,
@@ -199,13 +200,62 @@ def evaluate_reason_node(state: PaperState) -> PaperState:
         )
 
 
-def route_evaluation_after_score_fit(state: PaperState) -> Literal["reason", "end"]:
+def evaluate_matrix_node(state: PaperState) -> PaperState:
+    """Structured evidence matrix extraction (dedicated evaluation step)."""
+    if state.get("error"):
+        return state
+
+    try:
+        research_focus = st.session_state.get("research_focus", "General ML and AI research")
+        prompt = EVALUATION_MATRIX_PROMPT.format(
+            research_focus=research_focus,
+            summary=state.get("summary", ""),
+            key_findings=state.get("key_findings", ""),
+            methodology=state.get("methodology", ""),
+            pdf_text_excerpt=_build_pdf_excerpt(state.get("pdf_text", "")),
+        )
+        t0 = time.perf_counter()
+        content = invoke_gemini_prompt(prompt)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        source_profile = _parse_source_profile(content)
+        s2: PaperState = {
+            **state,
+            "source_profile": source_profile,
+        }
+        return append_trace(
+            s2,
+            "evaluate_matrix",
+            "Extracted dedicated evaluation matrix fields from paper content.",
+            duration_ms=elapsed_ms,
+            result={"source_profile": source_profile},
+        )
+    except Exception as e:
+        return append_trace(
+            {**state, "error": f"Evaluation matrix extraction failed: {str(e)}"},
+            "evaluate_matrix",
+            "Evaluation matrix extraction failed.",
+            detail=str(e),
+        )
+
+
+def route_evaluation_after_score_fit(state: PaperState) -> Literal["reason", "matrix", "end"]:
     """Orchestration: full evaluation runs a second LLM for REASON; quick stops after score/fit."""
     if state.get("error"):
         return "end"
-    if st.session_state.get("evaluation_depth", "full") == "quick":
+    if not bool(state.get("fit")):
         return "end"
+    if st.session_state.get("evaluation_depth", "full") == "quick":
+        return "matrix"
     return "reason"
+
+
+def route_evaluation_after_reason(state: PaperState) -> Literal["matrix", "end"]:
+    """Continue to matrix extraction after narrative reasoning."""
+    if state.get("error"):
+        return "end"
+    if not bool(state.get("fit")):
+        return "end"
+    return "matrix"
 
 
 def discovery_init_node(state: PaperState) -> PaperState:
@@ -687,6 +737,13 @@ def _build_candidate_triage_block(candidates: list[dict]) -> str:
         lines.append(f"[{idx}] TITLE: {title}")
         lines.append(f"[{idx}] ABSTRACT: {abstract[:1200]}")
     return "\n".join(lines)
+
+
+def _build_pdf_excerpt(pdf_text: str, max_chars: int = 10000) -> str:
+    text = (pdf_text or "").strip()
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars]
 
 
 def _parse_discovery_rank(content: str) -> tuple[list[int], bool, str]:

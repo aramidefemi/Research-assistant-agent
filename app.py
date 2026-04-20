@@ -275,6 +275,7 @@ if has_papers == "Yes":
                             "methodology": "",
                             "relevance_score": 0.0,
                             "relevance_reason": "",
+                            "source_profile": {},
                             "fit": False,
                             "error": None,
                             "trace": [],
@@ -415,8 +416,8 @@ if st.session_state.results:
 
             st.markdown("---")
 
-            tab1, tab2, tab3, tab4 = st.tabs(
-                ["📝 Summary", "🔑 Key Findings", "🔧 Methodology", "🧭 Agent trace"]
+            tab1, tab2, tab3, tab4, tab5 = st.tabs(
+                ["📝 Summary", "🔑 Key Findings", "🔧 Methodology", "📊 Evidence Matrix", "🧭 Agent trace"]
             )
 
             with tab1:
@@ -429,6 +430,9 @@ if st.session_state.results:
                 st.markdown(result.get("methodology", "Not available."))
 
             with tab4:
+                _render_source_matrix(dict(result.get("source_profile") or {}))
+
+            with tab5:
                 trace = result.get("trace") or []
                 oid = result.get("trace_id")
                 if oid:

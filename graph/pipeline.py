@@ -6,7 +6,9 @@ from graph.nodes import (
     summarise_node,
     evaluate_score_fit_node,
     evaluate_reason_node,
+    evaluate_matrix_node,
     route_evaluation_after_score_fit,
+    route_evaluation_after_reason,
     discovery_init_node,
     discovery_search_node,
     discovery_triage_candidates_node,
@@ -31,6 +33,7 @@ def build_pipeline():
     graph.add_node("summarise", summarise_node)
     graph.add_node("evaluate_score_fit", evaluate_score_fit_node)
     graph.add_node("evaluate_reason", evaluate_reason_node)
+    graph.add_node("evaluate_matrix", evaluate_matrix_node)
 
     graph.set_entry_point("extract")
     graph.add_edge("extract", "summarise")
@@ -38,9 +41,14 @@ def build_pipeline():
     graph.add_conditional_edges(
         "evaluate_score_fit",
         route_evaluation_after_score_fit,
-        {"reason": "evaluate_reason", "end": END},
+        {"reason": "evaluate_reason", "matrix": "evaluate_matrix", "end": END},
     )
-    graph.add_edge("evaluate_reason", END)
+    graph.add_conditional_edges(
+        "evaluate_reason",
+        route_evaluation_after_reason,
+        {"matrix": "evaluate_matrix", "end": END},
+    )
+    graph.add_edge("evaluate_matrix", END)
 
     return graph.compile()
 

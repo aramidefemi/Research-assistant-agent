@@ -8,6 +8,7 @@ class PaperState(TypedDict):
     methodology: str
     relevance_score: float
     relevance_reason: str
+    source_profile: NotRequired[dict[str, str]]
     fit: bool
     error: Optional[str]
     trace: NotRequired[list[dict[str, Any]]]
