@@ -100,7 +100,7 @@ st.set_page_config(
     page_title="Research Assistant",
     page_icon="🔬",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ── Custom CSS ────────────────────────────────────────────────────────────────
@@ -169,6 +169,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+st.markdown(
+    """
+<style>
+    [data-testid="stSidebar"] { display: none; }
+    [data-testid="collapsedControl"] { display: none; }
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
 # ── Session state init ────────────────────────────────────────────────────────
 if "results" not in st.session_state:
     st.session_state.results = []
@@ -179,40 +189,28 @@ if "evaluation_depth" not in st.session_state:
 if "discovery_results" not in st.session_state:
     st.session_state.discovery_results = []
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("# 🔬 Research Assistant")
-    st.markdown("---")
-
-    st.markdown('<p class="sidebar-header">Evaluation</p>', unsafe_allow_html=True)
-    st.radio(
-        "Evaluation depth",
-        ["full", "quick"],
-        format_func=lambda x: (
-            "Full — score, fit, and why (2 LLM steps)" if x == "full" else "Quick — score & fit only (1 step)"
-        ),
-        key="evaluation_depth",
-    )
-
-    st.markdown("---")
-
-    if st.session_state.results:
-        total = len(st.session_state.results)
-        fits = sum(1 for r in st.session_state.results if r.get("fit"))
-        st.markdown(f"**Papers processed:** {total}")
-        st.markdown(f"**Relevant:** {fits} / {total}")
-    if st.session_state.discovery_results:
-        d_total = len(st.session_state.discovery_results)
-        st.markdown(f"**Discovery runs:** {d_total}")
-        st.markdown("---")
-        if st.button("🗑 Clear all results"):
-            st.session_state.results = []
-            st.session_state.discovery_results = []
-            st.rerun()
-
 # ── Main area ─────────────────────────────────────────────────────────────────
 st.markdown("## Research Agent")
 st.markdown("Start with your research topic, then either upload papers to score or let the agent hunt for journals.")
+
+st.radio(
+    "Evaluation depth",
+    ["full", "quick"],
+    format_func=lambda x: (
+        "Full — score, fit, and why (2 LLM steps)" if x == "full" else "Quick — score & fit only (1 step)"
+    ),
+    key="evaluation_depth",
+)
+
+if st.session_state.results or st.session_state.discovery_results:
+    total = len(st.session_state.results)
+    fits = sum(1 for r in st.session_state.results if r.get("fit"))
+    d_total = len(st.session_state.discovery_results)
+    st.caption(f"Papers processed: {total} | Relevant: {fits}/{total} | Discovery runs: {d_total}")
+    if st.button("🗑 Clear all results"):
+        st.session_state.results = []
+        st.session_state.discovery_results = []
+        st.rerun()
 
 topic_input = st.text_area(
     "What is your research topic?",
