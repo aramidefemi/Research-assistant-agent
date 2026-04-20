@@ -103,23 +103,30 @@ Now do two things:
 1) Assess scholarly quality.
 2) Extract the evidence matrix fields listed below.
 
-For unknown/unclear values, write: N/A.
+Extraction policy:
+- Use only information supported by title/abstract/metadata provided above.
+- If unknown/unclear, return "N/A".
 
 Respond in this exact format:
 QUALITY: <YES or NO>
 REASON: <2-3 concise sentences>
-AUTHORS: <value>
-DATE_OF_RESEARCH: <value>
-COUNTRY_OF_ORIGIN: <value>
-PURPOSE_AIMS: <value>
-RESEARCH_QUESTIONS: <value>
-DATA_USED_METHOD_COLLECTION_SAMPLE_SIZE: <value>
-METHODS_TOOLS_USED: <value>
-METHOD_AND_DATA_COLLECTION_LIMITATIONS: <value>
-RESULTS: <value>
-CONTRIBUTION: <value>
-LIMITATION_OF_RESEARCH_OUTCOMES: <value>
-FUTURE_PERSPECTIVES: <value>
+SOURCE_PROFILE_JSON: <minified JSON object, valid JSON only>
+
+The JSON object must contain exactly these keys:
+{
+  "authors": "",
+  "date_of_research": "",
+  "country_of_origin": "",
+  "purpose_aims": "",
+  "research_questions": "",
+  "data_used_method_collection_sample_size": "",
+  "methods_tools_used": "",
+  "method_and_data_collection_limitations": "",
+  "results": "",
+  "contribution": "",
+  "limitation_of_research_outcomes": "",
+  "future_perspectives": ""
+}
 """
 
 DISCOVERY_ABSTRACT_TRIAGE_PROMPT = """You are triaging candidate journal papers for a student research topic.

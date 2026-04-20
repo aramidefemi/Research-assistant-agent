@@ -1,4 +1,5 @@
 import time
+import json
 
 import streamlit as st
 
@@ -680,7 +681,32 @@ def _parse_discovery_rank(content: str) -> tuple[list[int], bool, str]:
 
 
 def _parse_source_profile(content: str) -> dict[str, str]:
-    keys = {
+    canonical_keys = [
+        "authors",
+        "date_of_research",
+        "country_of_origin",
+        "purpose_aims",
+        "research_questions",
+        "data_used_method_collection_sample_size",
+        "methods_tools_used",
+        "method_and_data_collection_limitations",
+        "results",
+        "contribution",
+        "limitation_of_research_outcomes",
+        "future_perspectives",
+    ]
+    profile: dict[str, str] = {k: "N/A" for k in canonical_keys}
+
+    # 1) Primary path: parse declared SOURCE_PROFILE_JSON payload.
+    json_profile = _parse_source_profile_json_block(content)
+    if json_profile:
+        for key in canonical_keys:
+            value = str(json_profile.get(key, "")).strip()
+            profile[key] = value or "N/A"
+        return profile
+
+    # 2) Fallback path: tolerant line parser for key:value outputs.
+    label_to_key = {
         "AUTHORS": "authors",
         "DATE_OF_RESEARCH": "date_of_research",
         "COUNTRY_OF_ORIGIN": "country_of_origin",
@@ -693,16 +719,80 @@ def _parse_source_profile(content: str) -> dict[str, str]:
         "CONTRIBUTION": "contribution",
         "LIMITATION_OF_RESEARCH_OUTCOMES": "limitation_of_research_outcomes",
         "FUTURE_PERSPECTIVES": "future_perspectives",
+        "AUTHOR_S": "authors",
+        "DATE_OF_RESEARCH": "date_of_research",
     }
-    profile: dict[str, str] = {v: "N/A" for v in keys.values()}
     for raw_line in content.split("\n"):
         line = raw_line.strip()
         if ":" not in line:
             continue
         lhs, rhs = line.split(":", 1)
-        key = lhs.strip().upper()
-        mapped = keys.get(key)
+        normalized_label = _normalize_profile_label(lhs)
+        mapped = label_to_key.get(normalized_label)
         if mapped:
             value = rhs.strip()
             profile[mapped] = value or "N/A"
     return profile
+
+
+def _parse_source_profile_json_block(content: str) -> dict[str, str] | None:
+    marker = "SOURCE_PROFILE_JSON:"
+    idx = content.find(marker)
+    if idx == -1:
+        return None
+    after = content[idx + len(marker):].strip()
+    if not after:
+        return None
+    obj = _extract_first_json_object(after)
+    if not isinstance(obj, dict):
+        return None
+    return {str(k): str(v) for k, v in obj.items()}
+
+
+def _extract_first_json_object(text: str) -> dict | None:
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                snippet = text[start:i + 1]
+                try:
+                    loaded = json.loads(snippet)
+                except json.JSONDecodeError:
+                    return None
+                return loaded if isinstance(loaded, dict) else None
+    return None
+
+
+def _normalize_profile_label(label: str) -> str:
+    chars: list[str] = []
+    for ch in label.upper():
+        if "A" <= ch <= "Z" or "0" <= ch <= "9":
+            chars.append(ch)
+        else:
+            chars.append("_")
+    normalized = "".join(chars).strip("_")
+    while "__" in normalized:
+        normalized = normalized.replace("__", "_")
+    return normalized
