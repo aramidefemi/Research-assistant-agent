@@ -1,4 +1,4 @@
-"""Centralized LLM invocation: OpenRouter-first with Gemini fallback."""
+"""Centralized LLM invocation with env-driven provider selection."""
 from __future__ import annotations
 
 import json
@@ -86,6 +86,13 @@ def _config_int(key: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _config_bool(key: str, default: bool) -> bool:
+    raw = _config_str(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _wait_for_rate_slot(min_interval_s: float) -> None:
@@ -190,7 +197,69 @@ def _invoke_openrouter(prompt: str) -> str:
     return text
 
 
+def _invoke_openai_compatible(prompt: str) -> str:
+    try:
+        from openai import OpenAI
+    except Exception as err:
+        raise RuntimeError("Install `openai` package to use OPENAI provider.") from err
+
+    api_key = _config_str("OPENAI_API_KEY")
+    model = _config_str("OPENAI_MODEL")
+    if not api_key or not model:
+        raise RuntimeError("Set OPENAI_API_KEY and OPENAI_MODEL to enable OPENAI provider.")
+
+    base_url = _config_str("OPENAI_BASE_URL")
+    temperature = _config_float("OPENAI_TEMPERATURE", 1.0)
+    top_p = _config_float("OPENAI_TOP_P", 0.95)
+    max_tokens = _config_int("OPENAI_MAX_TOKENS", 4096)
+    timeout_s = _config_float("OPENAI_TIMEOUT_SECONDS", 60.0)
+    enable_thinking = _config_bool("OPENAI_ENABLE_THINKING", False)
+    reasoning_budget = _config_int("OPENAI_REASONING_BUDGET", max_tokens)
+
+    client = OpenAI(api_key=api_key, base_url=base_url or None, timeout=timeout_s)
+
+    extra_body = None
+    if enable_thinking:
+        extra_body = {
+            "chat_template_kwargs": {"enable_thinking": True},
+            "reasoning_budget": reasoning_budget,
+        }
+
+    kwargs: dict = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+        "top_p": top_p,
+        "max_tokens": max_tokens,
+        "stream": False,
+    }
+    if extra_body is not None:
+        kwargs["extra_body"] = extra_body
+
+    try:
+        resp = client.chat.completions.create(**kwargs)
+    except Exception as err:
+        raise RuntimeError(f"OPENAI provider call failed: {err}") from err
+
+    try:
+        message = resp.choices[0].message
+        text = (message.content or "").strip()
+    except (AttributeError, IndexError, TypeError) as err:
+        raise RuntimeError("OPENAI provider returned unexpected response format.") from err
+    if not text:
+        raise RuntimeError("OPENAI provider returned an empty response.")
+    return text
+
+
 def invoke_gemini_prompt(prompt: str) -> str:
+    provider = (_config_str("LLM_PROVIDER") or "").strip().lower()
+    if provider in {"openai", "openai_compatible", "nvidia"}:
+        return _invoke_openai_compatible(prompt)
+    if provider == "openrouter":
+        return _invoke_openrouter(prompt)
+    if provider == "gemini":
+        return _invoke_gemini(prompt)
+
     openrouter_error: Exception | None = None
     if _has_openrouter():
         try:
