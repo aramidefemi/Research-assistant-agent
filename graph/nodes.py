@@ -6,8 +6,14 @@ from graph.state import PaperState
 from graph.trace import append_trace
 from typing import Literal
 
-from utils.prompts import SUMMARISE_PROMPT, EVALUATE_SCORE_FIT_PROMPT, EVALUATE_REASON_PROMPT
+from utils.prompts import (
+    SUMMARISE_PROMPT,
+    EVALUATE_SCORE_FIT_PROMPT,
+    EVALUATE_REASON_PROMPT,
+    DISCOVERY_EVALUATE_PROMPT,
+)
 from utils.gemini_llm import invoke_gemini_prompt
+from utils.journal_search import search_journals
 
 
 def extract_node(state: PaperState) -> PaperState:
@@ -184,6 +190,140 @@ def route_evaluation_after_score_fit(state: PaperState) -> Literal["reason", "en
         return "end"
     return "reason"
 
+
+def discovery_init_node(state: PaperState) -> PaperState:
+    """Initialize discovery loop state for topic-only flow."""
+    topic = (state.get("topic") or "").strip()
+    if not topic:
+        return append_trace(
+            {**state, "error": "Topic is required for journal discovery."},
+            "discovery_init",
+            "Stopped discovery — missing topic.",
+        )
+    s2: PaperState = {
+        **state,
+        "discovery_query": topic,
+        "discovery_cursor": int(state.get("discovery_cursor") or 1),
+        "discovery_batch_size": int(state.get("discovery_batch_size") or 8),
+        "max_discovery_rounds": int(state.get("max_discovery_rounds") or 5),
+        "discovery_round": int(state.get("discovery_round") or 0),
+        "target_qualified_count": int(state.get("target_qualified_count") or 2),
+        "discovered_candidates": list(state.get("discovered_candidates") or []),
+        "evaluated_candidates": list(state.get("evaluated_candidates") or []),
+        "qualified_works": list(state.get("qualified_works") or []),
+    }
+    return append_trace(
+        s2,
+        "discovery_init",
+        "Initialized strict orchestrator for topic-only journal discovery.",
+        detail=f"target={s2['target_qualified_count']} | max_rounds={s2['max_discovery_rounds']}",
+    )
+
+
+def discovery_search_node(state: PaperState) -> PaperState:
+    """Fetch one batch of journal candidates from external search."""
+    if state.get("error"):
+        return state
+
+    topic = state.get("discovery_query") or state.get("topic") or ""
+    page = int(state.get("discovery_cursor") or 1)
+    batch_size = int(state.get("discovery_batch_size") or 8)
+    try:
+        candidates = search_journals(topic, page=page, per_page=batch_size)
+        s2: PaperState = {
+            **state,
+            "discovered_candidates": candidates,
+            "discovery_cursor": page + 1,
+            "discovery_round": int(state.get("discovery_round") or 0) + 1,
+        }
+        return append_trace(
+            s2,
+            "discovery_search",
+            f"Discovered {len(candidates)} candidate journal works for topic search.",
+            detail=f"query='{topic}' | page={page}",
+        )
+    except Exception as e:
+        return append_trace(
+            {**state, "error": f"Journal discovery failed: {str(e)}"},
+            "discovery_search",
+            "External journal search failed.",
+            detail=str(e),
+        )
+
+
+def discovery_evaluate_node(state: PaperState) -> PaperState:
+    """Evaluate candidate quality/relevance and keep qualified works."""
+    if state.get("error"):
+        return state
+
+    topic = (state.get("topic") or "").strip()
+    candidates = list(state.get("discovered_candidates") or [])
+    selected = list(state.get("qualified_works") or [])
+    evaluated = list(state.get("evaluated_candidates") or [])
+
+    try:
+        for cand in candidates:
+            if len(selected) >= int(state.get("target_qualified_count") or 2):
+                break
+            prompt = DISCOVERY_EVALUATE_PROMPT.format(
+                topic=topic,
+                title=cand.get("title", ""),
+                abstract=cand.get("abstract", ""),
+                venue=cand.get("venue", ""),
+                year=cand.get("year", ""),
+                cited_by_count=cand.get("cited_by_count", 0),
+            )
+            t0 = time.perf_counter()
+            content = invoke_gemini_prompt(prompt)
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            score, fit = _parse_score_fit(content)
+            quality = _parse_yes_no(content, "QUALITY:")
+            reason = _parse_reason(content)
+            row = {
+                **cand,
+                "score": score,
+                "fit": fit,
+                "quality": quality,
+                "reason": reason,
+                "eval_duration_ms": elapsed_ms,
+            }
+            evaluated.append(row)
+            if fit and quality and score >= 0.7:
+                selected.append(row)
+        s2: PaperState = {
+            **state,
+            "evaluated_candidates": evaluated,
+            "qualified_works": selected,
+        }
+        return append_trace(
+            s2,
+            "discovery_evaluate",
+            "Evaluated candidate journals and retained only strong fits.",
+            detail=f"qualified={len(selected)} / target={state.get('target_qualified_count', 2)}",
+        )
+    except Exception as e:
+        return append_trace(
+            {**state, "error": f"Discovery evaluation failed: {str(e)}"},
+            "discovery_evaluate",
+            "Candidate evaluation failed.",
+            detail=str(e),
+        )
+
+
+def route_discovery_loop(state: PaperState) -> Literal["search", "end"]:
+    """Loop until two qualified works are found or max rounds reached."""
+    if state.get("error"):
+        return "end"
+    qualified = len(state.get("qualified_works") or [])
+    target = int(state.get("target_qualified_count") or 2)
+    rounds = int(state.get("discovery_round") or 0)
+    max_rounds = int(state.get("max_discovery_rounds") or 5)
+    if qualified >= target:
+        return "end"
+    if rounds >= max_rounds:
+        return "end"
+    return "search"
+
 def _extract_section(text: str, start_marker: str, end_marker: str) -> str:
     """Helper to extract a section between two markers."""
     start_idx = text.find(start_marker)
@@ -197,3 +337,10 @@ def _extract_section(text: str, start_marker: str, end_marker: str) -> str:
             return text[start_idx:]
         return text[start_idx:end_idx]
     return text[start_idx:]
+
+
+def _parse_yes_no(content: str, key: str) -> bool:
+    for line in content.split("\n"):
+        if line.upper().startswith(key.upper()):
+            return "YES" in line.upper()
+    return False

@@ -7,6 +7,10 @@ from graph.nodes import (
     evaluate_score_fit_node,
     evaluate_reason_node,
     route_evaluation_after_score_fit,
+    discovery_init_node,
+    discovery_search_node,
+    discovery_evaluate_node,
+    route_discovery_loop,
 )
 
 
@@ -31,5 +35,26 @@ def build_pipeline():
 
     return graph.compile()
 
+
+def build_discovery_pipeline():
+    """Assemble and compile the topic-only discovery graph."""
+    graph = StateGraph(PaperState)
+
+    graph.add_node("discovery_init", discovery_init_node)
+    graph.add_node("discovery_search", discovery_search_node)
+    graph.add_node("discovery_evaluate", discovery_evaluate_node)
+
+    graph.set_entry_point("discovery_init")
+    graph.add_edge("discovery_init", "discovery_search")
+    graph.add_edge("discovery_search", "discovery_evaluate")
+    graph.add_conditional_edges(
+        "discovery_evaluate",
+        route_discovery_loop,
+        {"search": "discovery_search", "end": END},
+    )
+
+    return graph.compile()
+
 # Singleton — compile once and reuse
 pipeline = build_pipeline()
+discovery_pipeline = build_discovery_pipeline()

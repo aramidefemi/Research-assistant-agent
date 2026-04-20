@@ -5,7 +5,7 @@ load_dotenv()
 import streamlit as st
 from utils.pdf_reader import extract_text_from_pdf
 from utils.trace_store import persist_pipeline_run
-from graph.pipeline import pipeline
+from graph.pipeline import pipeline, discovery_pipeline
 
 
 def write_trace_steps(trace: list, *, idle_msg: str | None = "No trace entries for this run.") -> None:
@@ -30,16 +30,16 @@ def write_trace_steps(trace: list, *, idle_msg: str | None = "No trace entries f
         st.markdown("---")
 
 
-def run_pipeline_stream(initial_state: dict, live_placeholder, filename: str) -> dict:
-    """Run the graph with streaming; updates `live_placeholder` after each node completes."""
+def run_pipeline_stream(graph, initial_state: dict, live_placeholder, run_label: str) -> dict:
+    """Run a graph with streaming; updates `live_placeholder` after each node completes."""
     result = initial_state
     with live_placeholder.container():
-        st.markdown(f"#### 🧭 Live agent trace — `{filename}`")
+        st.markdown(f"#### 🧭 Live agent trace — `{run_label}`")
         st.caption("Starting pipeline…")
-    for chunk in pipeline.stream(initial_state, stream_mode="values"):
+    for chunk in graph.stream(initial_state, stream_mode="values"):
         result = chunk
         with live_placeholder.container():
-            st.markdown(f"#### 🧭 Live agent trace — `{filename}`")
+            st.markdown(f"#### 🧭 Live agent trace — `{run_label}`")
             write_trace_steps(chunk.get("trace") or [])
     return result
 
@@ -125,6 +125,8 @@ if "research_focus" not in st.session_state:
     st.session_state.research_focus = ""
 if "evaluation_depth" not in st.session_state:
     st.session_state.evaluation_depth = "full"
+if "discovery_results" not in st.session_state:
+    st.session_state.discovery_results = []
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -159,97 +161,139 @@ with st.sidebar:
         fits = sum(1 for r in st.session_state.results if r.get("fit"))
         st.markdown(f"**Papers processed:** {total}")
         st.markdown(f"**Relevant:** {fits} / {total}")
+    if st.session_state.discovery_results:
+        d_total = len(st.session_state.discovery_results)
+        st.markdown(f"**Discovery runs:** {d_total}")
         st.markdown("---")
         if st.button("🗑 Clear all results"):
             st.session_state.results = []
+            st.session_state.discovery_results = []
             st.rerun()
 
 # ── Main area ─────────────────────────────────────────────────────────────────
-st.markdown("## Paper Evaluator")
-st.markdown("Upload one or more journal PDFs. The agent will summarise each paper and score its relevance to your research focus.")
+st.markdown("## Research Agent")
+st.markdown("Start with a topic and let the agent discover + qualify top journal works. Optionally add your own PDFs.")
 
 if not st.session_state.research_focus:
-    st.info("👈 Set your research focus in the sidebar before uploading papers.")
+    st.info("👈 Set your research focus in the sidebar before running the agent.")
 
-uploaded_files = st.file_uploader(
-    "Upload PDFs",
-    type=["pdf"],
-    accept_multiple_files=True,
-    label_visibility="collapsed",
-)
+tab_discovery, tab_pdf = st.tabs(["🤖 Topic Agent (Recommended)", "📄 Add Your PDFs (Optional)"])
 
-if uploaded_files and st.session_state.research_focus:
-    already_processed = {r["filename"] for r in st.session_state.results}
-    new_files = [f for f in uploaded_files if f.name not in already_processed]
+with tab_discovery:
+    st.markdown("Give only a topic. The orchestrator loops search + evaluation until it finds 2 qualified works (or reaches max rounds).")
+    topic = st.text_input("Topic", placeholder="e.g. Explainable AI in credit risk scoring")
+    col_a, col_b = st.columns(2)
+    max_rounds = col_a.number_input("Max rounds", min_value=1, max_value=12, value=5)
+    batch_size = col_b.number_input("Candidates per round", min_value=3, max_value=20, value=8)
 
-    if new_files:
-        st.markdown(f"**{len(new_files)} new paper(s) to process.**")
-        if st.button(f"▶ Run agent on {len(new_files)} paper(s)"):
-            progress = st.progress(0)
-            status = st.empty()
+    if st.button("▶ Run topic agent", type="primary") and topic:
+        initial_state = {
+            "filename": f"discovery:{topic}",
+            "pdf_text": "",
+            "summary": "",
+            "key_findings": "",
+            "methodology": "",
+            "relevance_score": 0.0,
+            "relevance_reason": "",
+            "fit": False,
+            "error": None,
+            "trace": [],
+            "topic": topic.strip(),
+            "discovery_batch_size": int(batch_size),
+            "max_discovery_rounds": int(max_rounds),
+            "target_qualified_count": 2,
+            "qualified_works": [],
+            "evaluated_candidates": [],
+            "discovered_candidates": [],
+        }
+        with st.status("Discovery pipeline", expanded=True) as run_status:
+            live_trace = st.empty()
+            result = run_pipeline_stream(discovery_pipeline, initial_state, live_trace, f"topic:{topic}")
+            run_status.update(label="✅ Topic agent finished", state="complete", expanded=False)
+        st.session_state.discovery_results.append(result)
+        st.rerun()
 
-            for i, uploaded_file in enumerate(new_files):
-                status.markdown(f"⏳ Processing **{uploaded_file.name}**...")
+with tab_pdf:
+    st.markdown("Optional: upload one or more PDFs to evaluate your own selected papers.")
+    uploaded_files = st.file_uploader(
+        "Upload PDFs",
+        type=["pdf"],
+        accept_multiple_files=True,
+        label_visibility="collapsed",
+    )
 
-                try:
-                    pdf_bytes = uploaded_file.read()
-                    pdf_text = extract_text_from_pdf(pdf_bytes)
+    if uploaded_files and st.session_state.research_focus:
+        already_processed = {r["filename"] for r in st.session_state.results}
+        new_files = [f for f in uploaded_files if f.name not in already_processed]
 
-                    initial_state = {
-                        "filename": uploaded_file.name,
-                        "pdf_text": pdf_text,
-                        "summary": "",
-                        "key_findings": "",
-                        "methodology": "",
-                        "relevance_score": 0.0,
-                        "relevance_reason": "",
-                        "fit": False,
-                        "error": None,
-                        "trace": [],
-                    }
+        if new_files:
+            st.markdown(f"**{len(new_files)} new paper(s) to process.**")
+            if st.button(f"▶ Run agent on {len(new_files)} paper(s)"):
+                progress = st.progress(0)
+                status = st.empty()
 
-                    with st.status(
-                        f"Agent pipeline — `{uploaded_file.name}`",
-                        expanded=True,
-                    ) as run_status:
-                        live_trace = st.empty()
-                        result = run_pipeline_stream(initial_state, live_trace, uploaded_file.name)
-                        run_status.update(
-                            label=f"✅ Finished `{uploaded_file.name}`",
-                            state="complete",
-                            expanded=False,
-                        )
-                    focus = st.session_state.get("research_focus") or ""
-                    trace_id = persist_pipeline_run(
-                        {
-                            "filename": result.get("filename"),
-                            "research_focus": focus,
-                            "trace": result.get("trace") or [],
-                            "relevance_score": result.get("relevance_score"),
-                            "fit": result.get("fit"),
-                            "error": result.get("error"),
+                for i, uploaded_file in enumerate(new_files):
+                    status.markdown(f"⏳ Processing **{uploaded_file.name}**...")
+
+                    try:
+                        pdf_bytes = uploaded_file.read()
+                        pdf_text = extract_text_from_pdf(pdf_bytes)
+
+                        initial_state = {
+                            "filename": uploaded_file.name,
+                            "pdf_text": pdf_text,
+                            "summary": "",
+                            "key_findings": "",
+                            "methodology": "",
+                            "relevance_score": 0.0,
+                            "relevance_reason": "",
+                            "fit": False,
+                            "error": None,
+                            "trace": [],
                         }
-                    )
-                    if trace_id:
-                        result["trace_id"] = trace_id
-                    st.session_state.results.append(result)
 
-                except Exception as e:
-                    st.session_state.results.append({
-                        "filename": uploaded_file.name,
-                        "error": str(e),
-                        "fit": False,
-                    })
+                        with st.status(
+                            f"Agent pipeline — `{uploaded_file.name}`",
+                            expanded=True,
+                        ) as run_status:
+                            live_trace = st.empty()
+                            result = run_pipeline_stream(pipeline, initial_state, live_trace, uploaded_file.name)
+                            run_status.update(
+                                label=f"✅ Finished `{uploaded_file.name}`",
+                                state="complete",
+                                expanded=False,
+                            )
+                        focus = st.session_state.get("research_focus") or ""
+                        trace_id = persist_pipeline_run(
+                            {
+                                "filename": result.get("filename"),
+                                "research_focus": focus,
+                                "trace": result.get("trace") or [],
+                                "relevance_score": result.get("relevance_score"),
+                                "fit": result.get("fit"),
+                                "error": result.get("error"),
+                            }
+                        )
+                        if trace_id:
+                            result["trace_id"] = trace_id
+                        st.session_state.results.append(result)
 
-                progress.progress((i + 1) / len(new_files))
+                    except Exception as e:
+                        st.session_state.results.append({
+                            "filename": uploaded_file.name,
+                            "error": str(e),
+                            "fit": False,
+                        })
 
-            status.empty()
-            progress.empty()
-            st.success("✅ Done! Results below.")
-            st.rerun()
+                    progress.progress((i + 1) / len(new_files))
 
-elif uploaded_files and not st.session_state.research_focus:
-    st.warning("Please set your research focus in the sidebar first.")
+                status.empty()
+                progress.empty()
+                st.success("✅ Done! Results below.")
+                st.rerun()
+
+    elif uploaded_files and not st.session_state.research_focus:
+        st.warning("Please set your research focus in the sidebar first.")
 
 # ── Results ───────────────────────────────────────────────────────────────────
 if st.session_state.results:
@@ -316,3 +360,31 @@ if st.session_state.results:
                 if oid:
                     st.caption(f"Stored run id: `{oid}` (MongoDB)")
                 write_trace_steps(trace)
+
+if st.session_state.discovery_results:
+    st.markdown("---")
+    st.markdown("## Discovery Results")
+    for i, run in enumerate(reversed(st.session_state.discovery_results), start=1):
+        topic = run.get("topic", "Unknown topic")
+        qualified = run.get("qualified_works") or []
+        err = run.get("error")
+        with st.expander(f"🔎 Run {i} — {topic}", expanded=False):
+            if err:
+                st.error(err)
+                continue
+            st.markdown(f"**Qualified works:** {len(qualified)}")
+            if not qualified:
+                st.info("No qualified works found within current limits.")
+            for idx, item in enumerate(qualified[:2], start=1):
+                st.markdown(f"### {idx}. {item.get('title', 'Untitled')}")
+                meta = f"{item.get('venue', 'Unknown venue')} | {item.get('year', 'n/a')} | citations: {item.get('cited_by_count', 0)}"
+                st.caption(meta)
+                if item.get("doi"):
+                    st.markdown(f"DOI: `{item.get('doi')}`")
+                if item.get("url"):
+                    st.markdown(f"OpenAlex: {item.get('url')}")
+                st.markdown(f"**Score:** `{item.get('score', 0):.2f}`")
+                st.markdown(f"**Why:** {item.get('reason', '')}")
+                st.markdown("---")
+            st.markdown("#### 🧭 Agent trace")
+            write_trace_steps(run.get("trace") or [])

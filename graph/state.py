@@ -11,3 +11,13 @@ class PaperState(TypedDict):
     fit: bool
     error: Optional[str]
     trace: NotRequired[list[dict[str, Any]]]
+    topic: NotRequired[str]
+    discovery_query: NotRequired[str]
+    discovery_cursor: NotRequired[int]
+    discovery_batch_size: NotRequired[int]
+    max_discovery_rounds: NotRequired[int]
+    discovery_round: NotRequired[int]
+    target_qualified_count: NotRequired[int]
+    discovered_candidates: NotRequired[list[dict[str, Any]]]
+    evaluated_candidates: NotRequired[list[dict[str, Any]]]
+    qualified_works: NotRequired[list[dict[str, Any]]]

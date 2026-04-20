@@ -1,6 +1,8 @@
 # Research Assistant
 
-An AI assistant built with **LangGraph** and **Streamlit**. It evaluates academic PDFs against your research focus using a **three-step graph** (extract → summarise → evaluate), not a single prompt.
+An AI assistant built with **LangGraph** and **Streamlit**. It supports:
+- **PDF evaluation flow**: evaluate academic PDFs against your research focus using a three-step graph (extract → summarise → evaluate).
+- **Topic discovery flow**: take only a topic, search journal papers, and loop search + evaluation until it qualifies up to 2 strong works.
 
 ### Agent architecture (preview)
 
@@ -8,14 +10,17 @@ PDF text is validated, then **summarise** and **evaluate** call Gemini in sequen
 
 ```
 PDF → extract → summarise → evaluate → END
+Topic → discovery_init → discovery_search → discovery_evaluate ↺ until 2 qualified or max rounds
 ```
 
 ## What it does
 
 1. Set your research focus in the sidebar.
-2. Upload one or more PDFs.
-3. For each paper, the pipeline validates text, generates a structured summary (summary, findings, methodology), then scores relevance to your focus.
-4. Results show fit verdict, score, narrative fields, and an **Agent trace** tab listing each graph node, what it contributed, and timings for Gemini calls.
+2. Choose either:
+   - Upload PDFs for direct paper evaluation.
+   - Enter only a topic for journal discovery.
+3. Topic discovery loops over external journal search and your evaluator until at least 2 qualified papers are found or max rounds are reached.
+4. Results show score, fit, reasons, and an **Agent trace** with per-node contributions.
 
 ## Orchestration and tracing
 

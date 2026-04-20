@@ -63,3 +63,24 @@ Explain briefly why this paper does or does not fit the research focus.
 Respond in this exact format:
 REASON: <2-3 sentences>
 """
+
+DISCOVERY_EVALUATE_PROMPT = """You are qualifying candidate journal papers for a student research topic.
+
+Research Topic:
+{topic}
+
+Candidate Paper Metadata:
+TITLE: {title}
+ABSTRACT: {abstract}
+VENUE: {venue}
+YEAR: {year}
+CITED_BY_COUNT: {cited_by_count}
+
+Score the candidate on topic relevance and scholarly quality.
+
+Respond in this exact format:
+SCORE: <a number from 0.0 to 1.0>
+FIT: <YES or NO>
+QUALITY: <YES or NO>
+REASON: <2-3 concise sentences>
+"""
