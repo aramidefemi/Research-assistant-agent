@@ -436,12 +436,53 @@ if st.session_state.discovery_results:
                 st.markdown(f"### {idx}. {item.get('title', 'Untitled')}")
                 meta = f"{item.get('venue', 'Unknown venue')} | {item.get('year', 'n/a')} | citations: {item.get('cited_by_count', 0)}"
                 st.caption(meta)
-                if item.get("doi"):
-                    st.markdown(f"DOI: `{item.get('doi')}`")
-                if item.get("url"):
-                    st.markdown(f"OpenAlex: {item.get('url')}")
-                st.markdown(f"**Score:** `{item.get('score', 0):.2f}`")
-                st.markdown(f"**Why:** {item.get('reason', '')}")
+
+                score = float(item.get("score") or 0.0)
+                fit = bool(item.get("fit"))
+                quality = bool(item.get("quality"))
+                score_pct = max(0, min(100, int(score * 100)))
+                fit_badge = (
+                    '<div class="fit-yes">✅ TOPIC FIT</div>'
+                    if fit else
+                    '<div class="fit-no">❌ TOPIC MISMATCH</div>'
+                )
+                quality_badge = (
+                    '<div class="fit-yes">✅ SCHOLARLY QUALITY</div>'
+                    if quality else
+                    '<div class="fit-no">❌ QUALITY RISK</div>'
+                )
+
+                c1, c2 = st.columns([1, 3])
+                with c1:
+                    st.markdown(fit_badge, unsafe_allow_html=True)
+                    st.markdown(quality_badge, unsafe_allow_html=True)
+                    st.markdown(f"**Score:** `{score:.2f}`")
+                    st.markdown(
+                        f'<div class="score-bar-wrap"><div style="background:#4ade80;'
+                        f'width:{score_pct}%;height:8px;border-radius:4px;"></div></div>',
+                        unsafe_allow_html=True,
+                    )
+                with c2:
+                    st.markdown(f"**Why this qualified:** {item.get('reason', 'No rationale returned.')}")
+
+                tab_overview, tab_abstract, tab_links = st.tabs(
+                    ["📌 Overview", "🧾 Abstract", "🔗 Sources"]
+                )
+                with tab_overview:
+                    st.markdown(f"**Venue:** {item.get('venue', 'Unknown venue')}")
+                    st.markdown(f"**Year:** {item.get('year', 'n/a')}")
+                    st.markdown(f"**Citations:** {item.get('cited_by_count', 0)}")
+                    st.markdown(f"**Topical fit:** {'YES' if fit else 'NO'}")
+                    st.markdown(f"**Scholarly quality:** {'YES' if quality else 'NO'}")
+                with tab_abstract:
+                    st.markdown(item.get("abstract") or "Abstract not available.")
+                with tab_links:
+                    if item.get("doi"):
+                        st.markdown(f"DOI: `{item.get('doi')}`")
+                    if item.get("url"):
+                        st.markdown(f"OpenAlex: {item.get('url')}")
+                    if not item.get("doi") and not item.get("url"):
+                        st.caption("No external links available for this work.")
                 st.markdown("---")
             st.markdown("#### 🧭 Agent trace")
             write_trace_steps(run.get("trace") or [])

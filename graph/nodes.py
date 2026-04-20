@@ -12,6 +12,7 @@ from utils.prompts import (
     EVALUATE_REASON_PROMPT,
     DISCOVERY_SCORE_FIT_PROMPT,
     DISCOVERY_QUALITY_REASON_PROMPT,
+    DISCOVERY_ABSTRACT_TRIAGE_PROMPT,
 )
 from utils.gemini_llm import invoke_gemini_prompt
 from utils.journal_search import search_journals
@@ -296,28 +297,99 @@ def discovery_prepare_candidates_node(state: PaperState) -> PaperState:
     )
 
 
+def discovery_triage_candidates_node(state: PaperState) -> PaperState:
+    """Rank current round candidates by abstract-only AI triage."""
+    if state.get("error"):
+        return state
+    candidates = list(state.get("discovered_candidates") or [])
+    if not candidates:
+        return append_trace(
+            state,
+            "discovery_triage_candidates",
+            "No candidates to triage in this round.",
+            result={"ranked_count": 0, "refetch": True},
+        )
+
+    topic = (state.get("topic") or "").strip()
+    try:
+        candidates_block = _build_candidate_triage_block(candidates)
+        prompt = DISCOVERY_ABSTRACT_TRIAGE_PROMPT.format(
+            topic=topic,
+            candidates_block=candidates_block,
+        )
+        t0 = time.perf_counter()
+        content = invoke_gemini_prompt(prompt)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        ranked_indices, refetch, reason = _parse_discovery_rank(content)
+        if refetch or not ranked_indices:
+            s2: PaperState = {**state, "discovered_candidates": []}
+            return append_trace(
+                s2,
+                "discovery_triage_candidates",
+                "Abstract triage found no promising candidates; requesting next offset batch.",
+                detail=reason[:200],
+                duration_ms=elapsed_ms,
+                result={"ranked_count": 0, "refetch": True, "reason": reason},
+            )
+
+        valid_ranked_indices = [idx for idx in ranked_indices if 0 <= idx < len(candidates)]
+        if not valid_ranked_indices:
+            s2: PaperState = {**state, "discovered_candidates": []}
+            return append_trace(
+                s2,
+                "discovery_triage_candidates",
+                "Abstract triage returned no valid ranked candidates; requesting next offset batch.",
+                detail=reason[:200],
+                duration_ms=elapsed_ms,
+                result={"ranked_count": 0, "refetch": True, "reason": reason},
+            )
+        ranked_candidates = [candidates[idx] for idx in valid_ranked_indices]
+        s2 = {**state, "discovered_candidates": ranked_candidates}
+        return append_trace(
+            s2,
+            "discovery_triage_candidates",
+            "Ranked candidates by abstract-only AI triage before evaluation.",
+            detail=reason[:200],
+            duration_ms=elapsed_ms,
+            result={
+                "ranked_count": len(ranked_candidates),
+                "refetch": False,
+                "ranked_indices": valid_ranked_indices,
+                "reason": reason,
+            },
+        )
+    except Exception as e:
+        return append_trace(
+            state,
+            "discovery_triage_candidates",
+            "Abstract triage failed; keeping search order for evaluation.",
+            detail=str(e),
+            result={"ranked_count": len(candidates), "fallback": "search_order"},
+        )
+
+
 def discovery_pick_candidate_node(state: PaperState) -> PaperState:
-    """Pick next candidate from queue."""
+    """Pick next candidate from prepared queue."""
     if state.get("error"):
         return state
     queue = list(state.get("candidate_queue") or [])
-    current = queue.pop(0) if queue else None
-    s2: PaperState = {
-        **state,
-        "candidate_queue": queue,
-        "current_candidate": current,
-    }
-    if not current:
+    if not queue:
         return append_trace(
-            s2,
+            {**state, "current_candidate": None, "candidate_queue": queue},
             "discovery_pick_candidate",
             "No more candidates in current round queue.",
             result={"picked": None, "remaining_queue": len(queue)},
         )
+    current = queue.pop(0)
+    s2 = {
+        **state,
+        "candidate_queue": queue,
+        "current_candidate": current,
+    }
     return append_trace(
         s2,
         "discovery_pick_candidate",
-        "Picked one candidate for evaluation.",
+        "Picked next candidate from triaged queue for evaluation.",
         detail=current.get("title", "")[:120],
         result={"picked": current, "remaining_queue": len(queue)},
     )
@@ -554,3 +626,48 @@ def _parse_yes_no(content: str, key: str) -> bool:
         if line.upper().startswith(key.upper()):
             return "YES" in line.upper()
     return False
+
+
+def _build_candidate_triage_block(candidates: list[dict]) -> str:
+    lines: list[str] = []
+    for idx, candidate in enumerate(candidates):
+        title = str(candidate.get("title") or "").strip()
+        abstract = str(candidate.get("abstract") or "").strip()
+        if not abstract:
+            abstract = "N/A"
+        lines.append(f"[{idx}] TITLE: {title}")
+        lines.append(f"[{idx}] ABSTRACT: {abstract[:1200]}")
+    return "\n".join(lines)
+
+
+def _parse_discovery_rank(content: str) -> tuple[list[int], bool, str]:
+    ranked_indices: list[int] = []
+    refetch = False
+    reason = "No reason provided."
+    for raw_line in content.split("\n"):
+        line = raw_line.strip()
+        upper = line.upper()
+        if upper.startswith("ORDER:"):
+            value = line.split(":", 1)[1].strip()
+            parsed: list[int] = []
+            for part in value.split(","):
+                token = part.strip()
+                if not token:
+                    continue
+                try:
+                    parsed.append(int(token))
+                except ValueError:
+                    continue
+            ranked_indices = parsed
+        elif upper.startswith("REFETCH:"):
+            refetch = "YES" in upper
+        elif upper.startswith("REASON:"):
+            reason = line.split(":", 1)[1].strip() or reason
+    deduped: list[int] = []
+    seen: set[int] = set()
+    for idx in ranked_indices:
+        if idx in seen:
+            continue
+        seen.add(idx)
+        deduped.append(idx)
+    return deduped, refetch, reason

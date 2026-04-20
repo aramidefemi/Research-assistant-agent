@@ -9,6 +9,7 @@ from graph.nodes import (
     route_evaluation_after_score_fit,
     discovery_init_node,
     discovery_search_node,
+    discovery_triage_candidates_node,
     discovery_prepare_candidates_node,
     discovery_pick_candidate_node,
     discovery_score_fit_node,
@@ -49,6 +50,7 @@ def build_discovery_pipeline():
 
     graph.add_node("discovery_init", discovery_init_node)
     graph.add_node("discovery_search", discovery_search_node)
+    graph.add_node("discovery_triage_candidates", discovery_triage_candidates_node)
     graph.add_node("discovery_prepare_candidates", discovery_prepare_candidates_node)
     graph.add_node("discovery_pick_candidate", discovery_pick_candidate_node)
     graph.add_node("discovery_score_fit", discovery_score_fit_node)
@@ -58,7 +60,8 @@ def build_discovery_pipeline():
 
     graph.set_entry_point("discovery_init")
     graph.add_edge("discovery_init", "discovery_search")
-    graph.add_edge("discovery_search", "discovery_prepare_candidates")
+    graph.add_edge("discovery_search", "discovery_triage_candidates")
+    graph.add_edge("discovery_triage_candidates", "discovery_prepare_candidates")
     graph.add_edge("discovery_prepare_candidates", "discovery_pick_candidate")
     graph.add_conditional_edges(
         "discovery_pick_candidate",

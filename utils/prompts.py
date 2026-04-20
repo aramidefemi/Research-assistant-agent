@@ -105,3 +105,22 @@ Respond in this exact format:
 QUALITY: <YES or NO>
 REASON: <2-3 concise sentences>
 """
+
+DISCOVERY_ABSTRACT_TRIAGE_PROMPT = """You are triaging candidate journal papers for a student research topic.
+
+Research Topic:
+{topic}
+
+Candidates (index, title, abstract):
+{candidates_block}
+
+Task:
+1) Read only title + abstract.
+2) Rank candidates by likely topical fit and usefulness (best first).
+3) If all candidates look weak/off-topic, ask for a refetch.
+
+Respond in this exact format:
+ORDER: <comma-separated 0-based indexes in best-first order, e.g. 2,0,1>
+REFETCH: <YES or NO>
+REASON: <1-2 concise sentences>
+"""
