@@ -36,11 +36,30 @@ def run_pipeline_stream(graph, initial_state: dict, live_placeholder, run_label:
     with live_placeholder.container():
         st.markdown(f"#### 🧭 Live agent trace — `{run_label}`")
         st.caption("Starting pipeline…")
-    for chunk in graph.stream(initial_state, stream_mode="values"):
-        result = chunk
+    try:
+        for chunk in graph.stream(initial_state, stream_mode="values"):
+            result = chunk
+            with live_placeholder.container():
+                st.markdown(f"#### 🧭 Live agent trace — `{run_label}`")
+                write_trace_steps(chunk.get("trace") or [])
+    except Exception as e:
+        trace = list(result.get("trace") or [])
+        trace.append(
+            {
+                "node": "runtime",
+                "contribution": "Pipeline terminated unexpectedly; preserving partial progress.",
+                "detail": str(e),
+                "duration_ms": None,
+            }
+        )
+        result = {
+            **result,
+            "error": result.get("error") or f"Pipeline interrupted: {str(e)}",
+            "trace": trace,
+        }
         with live_placeholder.container():
             st.markdown(f"#### 🧭 Live agent trace — `{run_label}`")
-            write_trace_steps(chunk.get("trace") or [])
+            write_trace_steps(result.get("trace") or [])
     return result
 
 
@@ -209,7 +228,10 @@ with tab_discovery:
         with st.status("Discovery pipeline", expanded=True) as run_status:
             live_trace = st.empty()
             result = run_pipeline_stream(discovery_pipeline, initial_state, live_trace, f"topic:{topic}")
-            run_status.update(label="✅ Topic agent finished", state="complete", expanded=False)
+            if result.get("error"):
+                run_status.update(label="⚠️ Topic agent interrupted (partial results kept)", state="error", expanded=True)
+            else:
+                run_status.update(label="✅ Topic agent finished", state="complete", expanded=False)
         st.session_state.discovery_results.append(result)
         st.rerun()
 
@@ -258,11 +280,18 @@ with tab_pdf:
                         ) as run_status:
                             live_trace = st.empty()
                             result = run_pipeline_stream(pipeline, initial_state, live_trace, uploaded_file.name)
-                            run_status.update(
-                                label=f"✅ Finished `{uploaded_file.name}`",
-                                state="complete",
-                                expanded=False,
-                            )
+                            if result.get("error"):
+                                run_status.update(
+                                    label=f"⚠️ Interrupted `{uploaded_file.name}` (partial results kept)",
+                                    state="error",
+                                    expanded=True,
+                                )
+                            else:
+                                run_status.update(
+                                    label=f"✅ Finished `{uploaded_file.name}`",
+                                    state="complete",
+                                    expanded=False,
+                                )
                         focus = st.session_state.get("research_focus") or ""
                         trace_id = persist_pipeline_run(
                             {

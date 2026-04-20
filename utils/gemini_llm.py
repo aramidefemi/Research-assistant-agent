@@ -1,9 +1,12 @@
-"""Call Gemini with GEMINI_API_KEY, fall back to GEMINI_API_KEY_ALT on quota / rate limits."""
+"""Centralized LLM invocation: Gemini first, OpenRouter fallback on quota/rate limits."""
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
+from urllib import error as urlerror
+from urllib import request as urlrequest
 
 from dotenv import load_dotenv
 
@@ -61,6 +64,10 @@ def _key_chain() -> list[str]:
     return [k for k in keys if k]
 
 
+def _has_openrouter() -> bool:
+    return bool(_config_str("OPENROUTER_API_KEY") and _config_str("OPENROUTER_MODEL"))
+
+
 def _config_float(key: str, default: float) -> float:
     raw = _config_str(key)
     if raw is None:
@@ -91,7 +98,7 @@ def _wait_for_rate_slot(min_interval_s: float) -> None:
         _LAST_CALL_AT = time.time()
 
 
-def invoke_gemini_prompt(prompt: str) -> str:
+def _invoke_gemini(prompt: str) -> str:
     import google.generativeai as genai
 
     keys = _key_chain()
@@ -130,3 +137,63 @@ def invoke_gemini_prompt(prompt: str) -> str:
                     raise
     assert last is not None
     raise last
+
+
+def _http_error_message(err: urlerror.HTTPError) -> str:
+    payload = ""
+    try:
+        payload = err.read().decode("utf-8", errors="replace")
+    except Exception:
+        payload = ""
+    if payload:
+        return f"HTTP {err.code}: {payload}"
+    return f"HTTP {err.code}: {err.reason}"
+
+
+def _invoke_openrouter(prompt: str) -> str:
+    api_key = _config_str("OPENROUTER_API_KEY")
+    model = _config_str("OPENROUTER_MODEL")
+    if not api_key or not model:
+        raise RuntimeError("Set OPENROUTER_API_KEY and OPENROUTER_MODEL to enable OpenRouter fallback.")
+
+    endpoint = _config_str("OPENROUTER_API_URL") or "https://openrouter.ai/api/v1/chat/completions"
+    timeout_s = _config_float("OPENROUTER_TIMEOUT_SECONDS", 60.0)
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    req = urlrequest.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": _config_str("OPENROUTER_SITE_URL") or "http://localhost",
+            "X-Title": _config_str("OPENROUTER_APP_NAME") or "research-assistant",
+        },
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=timeout_s) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except urlerror.HTTPError as err:
+        raise RuntimeError(f"OpenRouter call failed: {_http_error_message(err)}") from err
+    except urlerror.URLError as err:
+        raise RuntimeError(f"OpenRouter network error: {err.reason}") from err
+
+    try:
+        text = (body["choices"][0]["message"]["content"] or "").strip()
+    except (KeyError, IndexError, TypeError) as err:
+        raise RuntimeError("OpenRouter returned unexpected response format.") from err
+    if not text:
+        raise RuntimeError("OpenRouter returned an empty response.")
+    return text
+
+
+def invoke_gemini_prompt(prompt: str) -> str:
+    try:
+        return _invoke_gemini(prompt)
+    except Exception as e:
+        if _is_quota_exceeded(e) and _has_openrouter():
+            return _invoke_openrouter(prompt)
+        raise
