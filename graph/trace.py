@@ -14,6 +14,7 @@ def append_trace(
     *,
     detail: str = "",
     duration_ms: float | None = None,
+    result: dict[str, Any] | None = None,
 ) -> PaperState:
     step: dict[str, Any] = {
         "node": node,
@@ -21,6 +22,7 @@ def append_trace(
         "detail": detail.strip(),
         "duration_ms": duration_ms,
         "at": datetime.now(timezone.utc).isoformat(),
+        "result": dict(result or {}),
     }
     prev = list(state.get("trace") or [])
     return {**state, "trace": prev + [step]}

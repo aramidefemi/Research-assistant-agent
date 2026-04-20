@@ -26,12 +26,14 @@ def extract_node(state: PaperState) -> PaperState:
             "extract",
             "Stopped pipeline — unusable PDF text.",
             detail="Fewer than 100 non-whitespace characters.",
+            result={"status": "error", "chars_extracted": len(text)},
         )
     return append_trace(
         state,
         "extract",
         "Validated corpus; handed off to summarisation.",
         detail=f"{len(text):,} characters of extracted text.",
+        result={"status": "ok", "chars_extracted": len(text)},
     )
 
 
@@ -63,6 +65,11 @@ def summarise_node(state: PaperState) -> PaperState:
             "Structured summary, findings, and methodology from the full text.",
             detail=f"Gemini call completed in {elapsed_ms:.0f} ms.",
             duration_ms=elapsed_ms,
+            result={
+                "summary": summary.strip(),
+                "key_findings": key_findings.strip(),
+                "methodology": methodology.strip(),
+            },
         )
     except Exception as e:
         return append_trace(
@@ -133,6 +140,11 @@ def evaluate_score_fit_node(state: PaperState) -> PaperState:
             f"Relevance scoring vs your focus: SCORE={score:.2f}, FIT={fit_lbl}.",
             detail=detail,
             duration_ms=elapsed_ms,
+            result={
+                "score": score,
+                "fit": fit,
+                "mode": "quick" if quick else "full",
+            },
         )
     except Exception as e:
         return append_trace(
@@ -173,6 +185,7 @@ def evaluate_reason_node(state: PaperState) -> PaperState:
             "Narrative explanation for the score and fit.",
             detail=f"{excerpt} | model call {elapsed_ms:.0f} ms.",
             duration_ms=elapsed_ms,
+            result={"reason": reason},
         )
     except Exception as e:
         return append_trace(
@@ -218,6 +231,12 @@ def discovery_init_node(state: PaperState) -> PaperState:
         "discovery_init",
         "Initialized strict orchestrator for topic-only journal discovery.",
         detail=f"target={s2['target_qualified_count']} | max_rounds={s2['max_discovery_rounds']}",
+        result={
+            "topic": topic,
+            "target_qualified_count": s2["target_qualified_count"],
+            "max_discovery_rounds": s2["max_discovery_rounds"],
+            "discovery_batch_size": s2["discovery_batch_size"],
+        },
     )
 
 
@@ -242,6 +261,12 @@ def discovery_search_node(state: PaperState) -> PaperState:
             "discovery_search",
             f"Discovered {len(candidates)} candidate journal works for topic search.",
             detail=f"query='{topic}' | page={page}",
+            result={
+                "query": topic,
+                "page": page,
+                "count": len(candidates),
+                "candidates": candidates,
+            },
         )
     except Exception as e:
         return append_trace(
@@ -267,6 +292,7 @@ def discovery_prepare_candidates_node(state: PaperState) -> PaperState:
         "discovery_prepare_candidates",
         "Prepared candidate queue for strict per-candidate evaluation nodes.",
         detail=f"queued={len(candidates)}",
+        result={"queued_count": len(candidates), "queue": candidates},
     )
 
 
@@ -286,12 +312,14 @@ def discovery_pick_candidate_node(state: PaperState) -> PaperState:
             s2,
             "discovery_pick_candidate",
             "No more candidates in current round queue.",
+            result={"picked": None, "remaining_queue": len(queue)},
         )
     return append_trace(
         s2,
         "discovery_pick_candidate",
         "Picked one candidate for evaluation.",
         detail=current.get("title", "")[:120],
+        result={"picked": current, "remaining_queue": len(queue)},
     )
 
 
@@ -328,6 +356,11 @@ def discovery_score_fit_node(state: PaperState) -> PaperState:
             "discovery_score_fit",
             f"Scored current candidate: SCORE={score:.2f}, FIT={'YES' if fit else 'NO'}.",
             duration_ms=elapsed_ms,
+            result={
+                "candidate_title": candidate.get("title", ""),
+                "score": score,
+                "fit": fit,
+            },
         )
     except Exception as e:
         return append_trace(
@@ -378,6 +411,11 @@ def discovery_quality_reason_node(state: PaperState) -> PaperState:
             f"Assessed scholarly quality: QUALITY={'YES' if quality else 'NO'}.",
             detail=reason[:200],
             duration_ms=elapsed_ms,
+            result={
+                "candidate_title": candidate.get("title", ""),
+                "quality": quality,
+                "reason": reason,
+            },
         )
     except Exception as e:
         return append_trace(
@@ -429,6 +467,12 @@ def discovery_finalize_candidate_node(state: PaperState) -> PaperState:
         "discovery_finalize_candidate",
         "Merged candidate evaluation into orchestrator state.",
         detail=f"qualified={len(selected)} / target={state.get('target_qualified_count', 2)}",
+        result={
+            "candidate": row,
+            "qualified_count": len(selected),
+            "evaluated_count": len(evaluated),
+            "target": state.get("target_qualified_count", 2),
+        },
     )
 
 
@@ -467,6 +511,11 @@ def discovery_round_check_node(state: PaperState) -> PaperState:
         "discovery_round_check",
         "Finished this round queue; deciding whether to search another round.",
         detail=f"round={state.get('discovery_round', 0)}",
+        result={
+            "round": int(state.get("discovery_round") or 0),
+            "qualified_count": len(state.get("qualified_works") or []),
+            "target": int(state.get("target_qualified_count") or 2),
+        },
     )
 
 

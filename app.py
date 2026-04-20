@@ -3,9 +3,38 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import streamlit as st
+from typing import Any
 from utils.pdf_reader import extract_text_from_pdf
 from utils.trace_store import persist_pipeline_run
 from graph.pipeline import pipeline, discovery_pipeline
+
+
+def _render_stage_result(value: Any, key: str, *, depth: int = 0) -> None:
+    if depth > 3:
+        st.caption("Max nested depth reached.")
+        return
+    if isinstance(value, dict):
+        for child_key, child_value in value.items():
+            label = f"{key}.{child_key}" if key else child_key
+            if isinstance(child_value, (dict, list)):
+                with st.expander(label, expanded=False):
+                    _render_stage_result(child_value, label, depth=depth + 1)
+            else:
+                st.markdown(f"**{label}:** `{child_value}`")
+        return
+    if isinstance(value, list):
+        if not value:
+            st.caption(f"{key}: []")
+            return
+        for idx, item in enumerate(value, start=1):
+            item_label = f"{key}[{idx}]"
+            if isinstance(item, (dict, list)):
+                with st.expander(item_label, expanded=False):
+                    _render_stage_result(item, item_label, depth=depth + 1)
+            else:
+                st.markdown(f"**{item_label}:** `{item}`")
+        return
+    st.markdown(f"**{key}:** `{value}`")
 
 
 def write_trace_steps(trace: list, *, idle_msg: str | None = "No trace entries for this run.") -> None:
@@ -19,15 +48,18 @@ def write_trace_steps(trace: list, *, idle_msg: str | None = "No trace entries f
         st.caption(f"LLM-timed steps total ≈ **{total_ms:.0f} ms**")
     for i, step in enumerate(trace, start=1):
         node = step.get("node", "?")
-        st.markdown(f"**Step {i} — `{node}`**")
-        st.markdown(step.get("contribution", ""))
-        det = step.get("detail") or ""
-        if det:
-            st.caption(det)
-        dm = step.get("duration_ms")
-        if dm is not None:
-            st.caption(f"⏱ {dm:.0f} ms")
-        st.markdown("---")
+        with st.expander(f"Step {i} — {node}", expanded=(i <= 2)):
+            st.markdown(step.get("contribution", ""))
+            det = step.get("detail") or ""
+            if det:
+                st.caption(det)
+            dm = step.get("duration_ms")
+            if dm is not None:
+                st.caption(f"⏱ {dm:.0f} ms")
+            result = step.get("result")
+            if result:
+                with st.expander("Stage result", expanded=False):
+                    _render_stage_result(result, "")
 
 
 def run_pipeline_stream(graph, initial_state: dict, live_placeholder, run_label: str) -> dict:
@@ -152,17 +184,6 @@ with st.sidebar:
     st.markdown("# 🔬 Research Assistant")
     st.markdown("---")
 
-    st.markdown('<p class="sidebar-header">Your Research Focus</p>', unsafe_allow_html=True)
-    research_focus = st.text_area(
-        label="Research focus",
-        label_visibility="collapsed",
-        placeholder="e.g. Machine learning approaches to credit risk scoring using XGBoost and SHAP explainability in low-data environments...",
-        height=160,
-        key="research_focus_input",
-    )
-    if research_focus:
-        st.session_state.research_focus = research_focus
-
     st.markdown('<p class="sidebar-header">Evaluation</p>', unsafe_allow_html=True)
     st.radio(
         "Evaluation depth",
@@ -191,52 +212,23 @@ with st.sidebar:
 
 # ── Main area ─────────────────────────────────────────────────────────────────
 st.markdown("## Research Agent")
-st.markdown("Start with a topic and let the agent discover + qualify top journal works. Optionally add your own PDFs.")
+st.markdown("Start with your research topic, then either upload papers to score or let the agent hunt for journals.")
 
-if not st.session_state.research_focus:
-    st.info("👈 Set your research focus in the sidebar before running the agent.")
+topic_input = st.text_area(
+    "What is your research topic?",
+    placeholder="e.g. Machine learning approaches to credit risk scoring using XGBoost and SHAP explainability in low-data environments...",
+    height=110,
+)
+st.session_state.research_focus = (topic_input or "").strip()
 
-tab_discovery, tab_pdf = st.tabs(["🤖 Topic Agent (Recommended)", "📄 Add Your PDFs (Optional)"])
+has_papers = st.radio(
+    "Do you already have PDFs/journals to score?",
+    ["Yes", "No"],
+    horizontal=True,
+)
 
-with tab_discovery:
-    st.markdown("Give only a topic. The orchestrator loops search + evaluation until it finds 2 qualified works (or reaches max rounds).")
-    topic = st.text_input("Topic", placeholder="e.g. Explainable AI in credit risk scoring")
-    col_a, col_b = st.columns(2)
-    max_rounds = col_a.number_input("Max rounds", min_value=1, max_value=12, value=5)
-    batch_size = col_b.number_input("Candidates per round", min_value=3, max_value=20, value=8)
-
-    if st.button("▶ Run topic agent", type="primary") and topic:
-        initial_state = {
-            "filename": f"discovery:{topic}",
-            "pdf_text": "",
-            "summary": "",
-            "key_findings": "",
-            "methodology": "",
-            "relevance_score": 0.0,
-            "relevance_reason": "",
-            "fit": False,
-            "error": None,
-            "trace": [],
-            "topic": topic.strip(),
-            "discovery_batch_size": int(batch_size),
-            "max_discovery_rounds": int(max_rounds),
-            "target_qualified_count": 2,
-            "qualified_works": [],
-            "evaluated_candidates": [],
-            "discovered_candidates": [],
-        }
-        with st.status("Discovery pipeline", expanded=True) as run_status:
-            live_trace = st.empty()
-            result = run_pipeline_stream(discovery_pipeline, initial_state, live_trace, f"topic:{topic}")
-            if result.get("error"):
-                run_status.update(label="⚠️ Topic agent interrupted (partial results kept)", state="error", expanded=True)
-            else:
-                run_status.update(label="✅ Topic agent finished", state="complete", expanded=False)
-        st.session_state.discovery_results.append(result)
-        st.rerun()
-
-with tab_pdf:
-    st.markdown("Optional: upload one or more PDFs to evaluate your own selected papers.")
+if has_papers == "Yes":
+    st.markdown("Upload one or more PDFs and the agent will score fit against your topic.")
     uploaded_files = st.file_uploader(
         "Upload PDFs",
         type=["pdf"],
@@ -250,7 +242,7 @@ with tab_pdf:
 
         if new_files:
             st.markdown(f"**{len(new_files)} new paper(s) to process.**")
-            if st.button(f"▶ Run agent on {len(new_files)} paper(s)"):
+            if st.button(f"▶ Score {len(new_files)} paper(s)", type="primary"):
                 progress = st.progress(0)
                 status = st.empty()
 
@@ -308,11 +300,13 @@ with tab_pdf:
                         st.session_state.results.append(result)
 
                     except Exception as e:
-                        st.session_state.results.append({
-                            "filename": uploaded_file.name,
-                            "error": str(e),
-                            "fit": False,
-                        })
+                        st.session_state.results.append(
+                            {
+                                "filename": uploaded_file.name,
+                                "error": str(e),
+                                "fit": False,
+                            }
+                        )
 
                     progress.progress((i + 1) / len(new_files))
 
@@ -320,9 +314,45 @@ with tab_pdf:
                 progress.empty()
                 st.success("✅ Done! Results below.")
                 st.rerun()
-
     elif uploaded_files and not st.session_state.research_focus:
-        st.warning("Please set your research focus in the sidebar first.")
+        st.warning("Please add your research topic first.")
+else:
+    st.markdown("No papers yet? Let the agent hunt and qualify top journal works for your topic.")
+    max_rounds = st.number_input("Max rounds", min_value=1, max_value=12, value=5)
+    batch_size = st.number_input("Candidates per round", min_value=3, max_value=20, value=8)
+    can_hunt = bool(st.session_state.research_focus)
+    if st.button("▶ Hunt journals for me", type="primary", disabled=not can_hunt):
+        topic = st.session_state.research_focus
+        initial_state = {
+            "filename": f"discovery:{topic}",
+            "pdf_text": "",
+            "summary": "",
+            "key_findings": "",
+            "methodology": "",
+            "relevance_score": 0.0,
+            "relevance_reason": "",
+            "fit": False,
+            "error": None,
+            "trace": [],
+            "topic": topic,
+            "discovery_batch_size": int(batch_size),
+            "max_discovery_rounds": int(max_rounds),
+            "target_qualified_count": 2,
+            "qualified_works": [],
+            "evaluated_candidates": [],
+            "discovered_candidates": [],
+        }
+        with st.status("Discovery pipeline", expanded=True) as run_status:
+            live_trace = st.empty()
+            result = run_pipeline_stream(discovery_pipeline, initial_state, live_trace, f"topic:{topic}")
+            if result.get("error"):
+                run_status.update(label="⚠️ Topic agent interrupted (partial results kept)", state="error", expanded=True)
+            else:
+                run_status.update(label="✅ Topic agent finished", state="complete", expanded=False)
+        st.session_state.discovery_results.append(result)
+        st.rerun()
+    if not can_hunt:
+        st.caption("Add your research topic to enable hunting.")
 
 # ── Results ───────────────────────────────────────────────────────────────────
 if st.session_state.results:
