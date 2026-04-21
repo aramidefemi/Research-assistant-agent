@@ -6,6 +6,7 @@ import streamlit as st
 from typing import Any
 from utils.pdf_reader import extract_text_from_pdf
 from utils.trace_store import persist_pipeline_run
+from utils.trace_flowchart import build_trace_flowchart_dot
 from graph.pipeline import pipeline, discovery_pipeline
 
 SOURCE_MATRIX_FIELDS = [
@@ -75,6 +76,11 @@ def write_trace_steps(trace: list, *, idle_msg: str | None = "No trace entries f
             if result:
                 with st.expander("Stage result", expanded=False):
                     _render_stage_result(result, "")
+
+
+def write_trace_flowchart(trace: list[dict[str, Any]]) -> None:
+    """Render executed trace as a runtime flowchart."""
+    st.graphviz_chart(build_trace_flowchart_dot(trace))
 
 
 def _render_source_matrix(profile: dict[str, str]) -> None:
@@ -437,6 +443,9 @@ if st.session_state.results:
                 oid = result.get("trace_id")
                 if oid:
                     st.caption(f"Stored run id: `{oid}` (MongoDB)")
+                st.markdown("**Flowchart**")
+                write_trace_flowchart(trace)
+                st.markdown("**Step-by-step trace**")
                 write_trace_steps(trace)
 
 if st.session_state.discovery_results:
@@ -508,4 +517,6 @@ if st.session_state.discovery_results:
                         st.caption("No external links available for this work.")
                 st.markdown("---")
             st.markdown("#### 🧭 Agent trace")
-            write_trace_steps(run.get("trace") or [])
+            trace = run.get("trace") or []
+            write_trace_flowchart(trace)
+            write_trace_steps(trace)
