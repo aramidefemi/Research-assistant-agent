@@ -3,12 +3,126 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import streamlit as st
+from html import escape
 from typing import Any
 from utils.pdf_reader import extract_text_from_pdf
 from utils.trace_store import persist_pipeline_run
 from utils.trace_flowchart import build_trace_flowchart_dot
 from paper_graph.pipeline import pipeline, discovery_pipeline
 from paper_graph.trace import trace_step_title
+
+def _mat_html(icon: str) -> str:
+    return f'<span class="material-sym" aria-hidden="true">{icon}</span>'
+
+
+def _html(value: Any) -> str:
+    return escape("" if value is None else str(value))
+
+
+def _clamp_score(score: float) -> int:
+    return max(0, min(100, int(round(score * 100))))
+
+
+def _build_section_intro_html(eyebrow: str, title: str, copy: str) -> str:
+    return f"""
+    <div class="ra-section-intro">
+        <div class="ra-eyebrow">{_html(eyebrow)}</div>
+        <h2 class="ra-section-title">{_html(title)}</h2>
+        <p class="ra-section-copy">{_html(copy)}</p>
+    </div>
+    """
+
+
+def _build_stat_card_html(label: str, value: str, hint: str | None = None) -> str:
+    hint_html = f'<div class="ra-stat-hint">{_html(hint)}</div>' if hint else ""
+    return f"""
+    <div class="ra-stat-card">
+        <div class="ra-stat-label">{_html(label)}</div>
+        <div class="ra-stat-value">{_html(value)}</div>
+        {hint_html}
+    </div>
+    """
+
+
+def _build_stats_grid_html(stats: list[tuple[str, str, str | None]]) -> str:
+    return '<div class="ra-stat-grid">' + "".join(
+        _build_stat_card_html(label, value, hint) for label, value, hint in stats
+    ) + "</div>"
+
+
+def _build_info_panel_html(title: str, copy: str, items: list[str]) -> str:
+    items_html = "".join(f"<li>{_html(item)}</li>" for item in items)
+    return f"""
+    <div class="ra-info-panel">
+        <div class="ra-eyebrow">Workspace guide</div>
+        <h3 class="ra-panel-title">{_html(title)}</h3>
+        <p class="ra-panel-copy">{_html(copy)}</p>
+        <ul class="ra-info-list">{items_html}</ul>
+    </div>
+    """
+
+
+def _build_badge_html(label: str, tone: str = "neutral", icon: str | None = None) -> str:
+    icon_html = _mat_html(icon) if icon else ""
+    return f'<span class="ra-badge ra-badge--{tone}">{icon_html}{_html(label)}</span>'
+
+
+def _build_meta_row_html(items: list[tuple[str, str]]) -> str:
+    chips = "".join(
+        f'<div class="ra-meta-chip"><span>{_html(label)}</span><strong>{_html(value)}</strong></div>'
+        for label, value in items
+        if value
+    )
+    return f'<div class="ra-meta-row">{chips}</div>' if chips else ""
+
+
+def _build_progress_html(score: float, tone: str) -> str:
+    return (
+        '<div class="ra-progress">'
+        f'<div class="ra-progress-bar ra-progress-bar--{tone}" style="width:{_clamp_score(score)}%;"></div>'
+        "</div>"
+    )
+
+
+def _build_summary_card_html(
+    *,
+    title: str,
+    eyebrow: str,
+    badges: list[str],
+    score: float,
+    score_label: str,
+    reason_label: str,
+    reason: str,
+    metadata: list[tuple[str, str]],
+    tone: str,
+) -> str:
+    badge_html = "".join(badges)
+    meta_html = _build_meta_row_html(metadata)
+    score_pct = _clamp_score(score)
+    return f"""
+    <div class="ra-summary-card">
+        <div class="ra-summary-head">
+            <div>
+                <div class="ra-eyebrow">{_html(eyebrow)}</div>
+                <h3 class="ra-summary-title">{_html(title)}</h3>
+            </div>
+            <div class="ra-badge-row">{badge_html}</div>
+        </div>
+        <div class="ra-summary-grid">
+            <div class="ra-score-card">
+                <div class="ra-score-label">{_html(score_label)}</div>
+                <div class="ra-score-value">{score_pct}<span>/100</span></div>
+                {_build_progress_html(score, tone)}
+            </div>
+            <div class="ra-reason-card">
+                <div class="ra-score-label">{_html(reason_label)}</div>
+                <p class="ra-reason-copy">{_html(reason or "No rationale returned.")}</p>
+                {meta_html}
+            </div>
+        </div>
+    </div>
+    """
+
 
 SOURCE_MATRIX_FIELDS = [
     ("authors", "Author/s"),
@@ -24,6 +138,14 @@ SOURCE_MATRIX_FIELDS = [
     ("limitation_of_research_outcomes", "Limitation of research outcomes"),
     ("future_perspectives", "Future perspectives"),
 ]
+
+
+def _format_duration_ms(ms: float) -> str:
+    sec = max(0, round(ms / 1000.0))
+    if sec < 60:
+        return f"{sec}s"
+    m, s = divmod(sec, 60)
+    return f"{m}m {s}s" if s else f"{m}m"
 
 
 def _render_stage_result(value: Any, key: str, *, depth: int = 0) -> None:
@@ -62,7 +184,7 @@ def write_trace_steps(trace: list, *, idle_msg: str | None = "No trace entries f
         return
     total_ms = sum(s.get("duration_ms") or 0 for s in trace if s.get("duration_ms") is not None)
     if total_ms > 0:
-        st.caption(f"LLM-timed steps total ≈ **{total_ms:.0f} ms**")
+        st.caption(f"LLM-timed steps total ≈ **{_format_duration_ms(total_ms)}**")
     for i, step in enumerate(trace, start=1):
         node = step.get("node", "?")
         title = trace_step_title(str(node))
@@ -73,7 +195,7 @@ def write_trace_steps(trace: list, *, idle_msg: str | None = "No trace entries f
                 st.caption(det)
             dm = step.get("duration_ms")
             if dm is not None:
-                st.caption(f"⏱ {dm:.0f} ms")
+                st.caption(f":material/schedule: {_format_duration_ms(dm)}")
             result = step.get("result")
             if result:
                 with st.expander("Stage result", expanded=False):
@@ -101,13 +223,13 @@ def run_pipeline_stream(graph, initial_state: dict, live_placeholder, run_label:
     """Run a graph with streaming; updates `live_placeholder` after each node completes."""
     result = initial_state
     with live_placeholder.container():
-        st.markdown(f"#### 🧭 Live agent trace — `{run_label}`")
+        st.markdown(f"#### :material/timeline: Live agent trace — `{run_label}`")
         st.caption("Starting pipeline…")
     try:
         for chunk in graph.stream(initial_state, stream_mode="values"):
             result = chunk
             with live_placeholder.container():
-                st.markdown(f"#### 🧭 Live agent trace — `{run_label}`")
+                st.markdown(f"#### :material/timeline: Live agent trace — `{run_label}`")
                 write_trace_steps(chunk.get("trace") or [])
     except Exception as e:
         trace = list(result.get("trace") or [])
@@ -125,7 +247,7 @@ def run_pipeline_stream(graph, initial_state: dict, live_placeholder, run_label:
             "trace": trace,
         }
         with live_placeholder.container():
-            st.markdown(f"#### 🧭 Live agent trace — `{run_label}`")
+            st.markdown(f"#### :material/timeline: Live agent trace — `{run_label}`")
             write_trace_steps(result.get("trace") or [])
     return result
 
@@ -133,7 +255,7 @@ def run_pipeline_stream(graph, initial_state: dict, live_placeholder, run_label:
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Research Assistant",
-    page_icon="🔬",
+    page_icon=None,
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -141,65 +263,370 @@ st.set_page_config(
 # ── Custom CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0');
 
-    html, body, [class*="css"] {
-        font-family: 'IBM Plex Sans', sans-serif;
+    :root {
+        --ra-bg: #0b1020;
+        --ra-bg-soft: rgba(15, 23, 42, 0.76);
+        --ra-surface: rgba(15, 23, 42, 0.72);
+        --ra-surface-strong: rgba(15, 23, 42, 0.9);
+        --ra-border: rgba(148, 163, 184, 0.18);
+        --ra-border-strong: rgba(96, 165, 250, 0.28);
+        --ra-text: #e5eefb;
+        --ra-text-soft: #9fb2cf;
+        --ra-accent: #7c3aed;
+        --ra-accent-2: #38bdf8;
+        --ra-success: #34d399;
+        --ra-danger: #fb7185;
+        --ra-warning: #fbbf24;
     }
-    h1, h2, h3 { font-family: 'IBM Plex Mono', monospace; }
 
-    .stApp { background-color: #0f0f11; color: #e8e8e8; }
+    html, body, [class*="css"], [data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li {
+        font-family: 'Inter', sans-serif;
+    }
+    h1, h2, h3 {
+        font-family: 'Space Grotesk', sans-serif;
+        letter-spacing: -0.03em;
+    }
 
-    .metric-card {
-        background: #1a1a1f;
-        border: 1px solid #2a2a35;
-        border-radius: 8px;
-        padding: 1.2rem;
-        margin-bottom: 0.8rem;
+    .stApp {
+        background:
+            radial-gradient(circle at top left, rgba(124, 58, 237, 0.18), transparent 30%),
+            radial-gradient(circle at top right, rgba(56, 189, 248, 0.15), transparent 24%),
+            linear-gradient(180deg, #08101f 0%, #0b1020 100%);
+        color: var(--ra-text);
     }
-    .fit-yes {
-        background: #0d2b1a;
-        border: 1px solid #1a6b3a;
-        border-radius: 8px;
-        padding: 1rem;
-        color: #4ade80;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 1.1rem;
-        font-weight: 600;
+    .block-container {
+        max-width: 1280px;
+        padding-top: 2.2rem;
+        padding-bottom: 3rem;
     }
-    .fit-no {
-        background: #2b0d0d;
-        border: 1px solid #6b1a1a;
-        border-radius: 8px;
-        padding: 1rem;
-        color: #f87171;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 1.1rem;
-        font-weight: 600;
+
+    .ra-hero {
+        position: relative;
+        overflow: hidden;
+        margin-bottom: 1.4rem;
+        padding: 1.7rem 1.8rem;
+        border: 1px solid var(--ra-border-strong);
+        border-radius: 24px;
+        background: linear-gradient(135deg, rgba(17, 24, 39, 0.94), rgba(15, 23, 42, 0.82));
+        box-shadow: 0 30px 80px rgba(2, 6, 23, 0.45);
     }
-    .score-bar-wrap {
-        background: #1a1a1f;
-        border-radius: 4px;
-        height: 8px;
-        margin-top: 6px;
+    .ra-hero::after {
+        content: "";
+        position: absolute;
+        inset: auto -4rem -4rem auto;
+        width: 14rem;
+        height: 14rem;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(56, 189, 248, 0.26), transparent 65%);
+        pointer-events: none;
     }
-    .stButton>button {
-        background: #4f46e5;
-        color: white;
-        border: none;
-        border-radius: 6px;
-        padding: 0.6rem 1.4rem;
-        font-family: 'IBM Plex Mono', monospace;
-        font-weight: 600;
-    }
-    .stButton>button:hover { background: #6366f1; }
-    .sidebar-header {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.75rem;
-        color: #888;
+    .ra-eyebrow {
+        margin: 0 0 0.3rem 0;
+        color: #8fb3ff;
+        font-size: 0.76rem;
+        font-weight: 700;
         text-transform: uppercase;
-        letter-spacing: 0.1em;
-        margin-bottom: 0.4rem;
+        letter-spacing: 0.16em;
+    }
+    .ra-hero-title, .ra-section-title, .ra-summary-title, .ra-panel-title {
+        margin: 0;
+        color: #f8fbff;
+    }
+    .ra-hero-title {
+        font-size: clamp(2rem, 3vw, 3.2rem);
+        line-height: 1.02;
+        max-width: 12ch;
+    }
+    .ra-hero-copy, .ra-section-copy, .ra-panel-copy, .ra-reason-copy {
+        color: var(--ra-text-soft);
+        line-height: 1.6;
+    }
+    .ra-hero-copy {
+        max-width: 52rem;
+        margin: 0.75rem 0 0 0;
+        font-size: 1rem;
+    }
+    .ra-section-intro {
+        margin: 0.2rem 0 0.85rem 0;
+    }
+    .ra-section-title {
+        font-size: 1.25rem;
+        margin-bottom: 0.35rem;
+    }
+    .ra-section-copy, .ra-panel-copy {
+        margin: 0;
+        font-size: 0.97rem;
+    }
+
+    .ra-stat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 0.85rem;
+        margin: 1rem 0 0 0;
+    }
+    .ra-stat-card, .ra-info-panel, .ra-summary-card {
+        background: var(--ra-surface);
+        border: 1px solid var(--ra-border);
+        border-radius: 20px;
+        box-shadow: 0 18px 50px rgba(2, 6, 23, 0.25);
+        backdrop-filter: blur(14px);
+    }
+    .ra-stat-card {
+        padding: 1rem 1.05rem;
+    }
+    .ra-stat-label, .ra-score-label {
+        color: #8ea4c4;
+        font-size: 0.78rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+    }
+    .ra-stat-value {
+        margin-top: 0.35rem;
+        font-size: 1.6rem;
+        font-weight: 700;
+        color: #f8fbff;
+    }
+    .ra-stat-hint {
+        margin-top: 0.25rem;
+        color: var(--ra-text-soft);
+        font-size: 0.84rem;
+    }
+
+    .ra-info-panel {
+        padding: 1.2rem 1.25rem;
+        margin-top: 0.4rem;
+    }
+    .ra-panel-title {
+        font-size: 1.05rem;
+        margin-bottom: 0.45rem;
+    }
+    .ra-info-list {
+        margin: 0.9rem 0 0 1rem;
+        padding: 0;
+        color: var(--ra-text-soft);
+    }
+    .ra-info-list li {
+        margin-bottom: 0.35rem;
+    }
+
+    .ra-badge-row, .ra-meta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+    }
+    .ra-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.32rem;
+        padding: 0.48rem 0.72rem;
+        border-radius: 999px;
+        border: 1px solid var(--ra-border);
+        background: rgba(15, 23, 42, 0.9);
+        color: #dbeafe;
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+    }
+    .ra-badge--positive {
+        border-color: rgba(52, 211, 153, 0.35);
+        background: rgba(6, 78, 59, 0.35);
+        color: #9ff3ca;
+    }
+    .ra-badge--negative {
+        border-color: rgba(251, 113, 133, 0.32);
+        background: rgba(127, 29, 29, 0.3);
+        color: #fecdd3;
+    }
+    .ra-badge--warning {
+        border-color: rgba(251, 191, 36, 0.36);
+        background: rgba(120, 53, 15, 0.28);
+        color: #fde68a;
+    }
+    .ra-badge--neutral {
+        border-color: rgba(148, 163, 184, 0.24);
+        color: #dbeafe;
+    }
+
+    .ra-summary-card {
+        padding: 1.2rem 1.2rem 1.1rem 1.2rem;
+        margin-bottom: 1rem;
+    }
+    .ra-summary-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 1rem;
+        margin-bottom: 1rem;
+    }
+    .ra-summary-title {
+        font-size: 1.35rem;
+        line-height: 1.18;
+    }
+    .ra-summary-grid {
+        display: grid;
+        grid-template-columns: minmax(180px, 230px) minmax(0, 1fr);
+        gap: 0.9rem;
+    }
+    .ra-score-card, .ra-reason-card {
+        padding: 1rem;
+        border-radius: 18px;
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        background: rgba(15, 23, 42, 0.72);
+    }
+    .ra-score-value {
+        display: flex;
+        align-items: baseline;
+        gap: 0.3rem;
+        margin: 0.4rem 0 0.9rem 0;
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 2.3rem;
+        font-weight: 700;
+        color: #f8fbff;
+    }
+    .ra-score-value span {
+        font-size: 0.95rem;
+        color: var(--ra-text-soft);
+    }
+    .ra-reason-copy {
+        margin: 0.45rem 0 0 0;
+        font-size: 0.96rem;
+    }
+    .ra-meta-row {
+        margin-top: 1rem;
+    }
+    .ra-meta-chip {
+        display: inline-flex;
+        gap: 0.45rem;
+        align-items: center;
+        padding: 0.5rem 0.7rem;
+        border-radius: 14px;
+        background: rgba(30, 41, 59, 0.9);
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        color: var(--ra-text-soft);
+        font-size: 0.82rem;
+    }
+    .ra-meta-chip strong {
+        color: #f8fbff;
+        font-weight: 600;
+    }
+
+    .ra-progress {
+        height: 10px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(51, 65, 85, 0.72);
+    }
+    .ra-progress-bar {
+        height: 100%;
+        border-radius: inherit;
+    }
+    .ra-progress-bar--positive {
+        background: linear-gradient(90deg, #34d399, #22c55e);
+    }
+    .ra-progress-bar--negative {
+        background: linear-gradient(90deg, #fb7185, #ef4444);
+    }
+    .ra-progress-bar--warning {
+        background: linear-gradient(90deg, #fbbf24, #f59e0b);
+    }
+
+    .stButton>button {
+        background: linear-gradient(135deg, #7c3aed, #4f46e5);
+        color: white;
+        border: 1px solid rgba(191, 219, 254, 0.12);
+        border-radius: 999px;
+        padding: 0.68rem 1.2rem;
+        font-family: 'Inter', sans-serif;
+        font-weight: 600;
+        box-shadow: 0 12px 28px rgba(79, 70, 229, 0.35);
+    }
+    .stButton>button:hover {
+        border-color: rgba(191, 219, 254, 0.22);
+        background: linear-gradient(135deg, #8b5cf6, #6366f1);
+    }
+
+    .stTextArea textarea,
+    div[data-baseweb="input"] input,
+    div[data-baseweb="select"] input,
+    div[data-baseweb="base-input"] input {
+        background: rgba(15, 23, 42, 0.76) !important;
+        color: #eef4ff !important;
+        border: 1px solid rgba(148, 163, 184, 0.18) !important;
+        border-radius: 16px !important;
+    }
+    .stTextArea textarea:focus,
+    div[data-baseweb="input"] input:focus,
+    div[data-baseweb="base-input"] input:focus {
+        border-color: rgba(96, 165, 250, 0.52) !important;
+        box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.18) !important;
+    }
+    div[data-testid="stFileUploaderDropzone"] {
+        background: rgba(15, 23, 42, 0.72);
+        border: 1px dashed rgba(96, 165, 250, 0.32);
+        border-radius: 22px;
+        padding: 1.15rem 1rem;
+    }
+    div[role="radiogroup"] {
+        gap: 0.6rem;
+    }
+    div[role="radiogroup"] label {
+        background: rgba(15, 23, 42, 0.76);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 999px;
+        padding: 0.35rem 0.7rem;
+    }
+    div[data-baseweb="tab-list"] {
+        gap: 0.45rem;
+    }
+    button[role="tab"] {
+        border-radius: 999px !important;
+        padding: 0.4rem 0.85rem !important;
+        background: rgba(15, 23, 42, 0.72) !important;
+        border: 1px solid rgba(148, 163, 184, 0.16) !important;
+    }
+    button[role="tab"][aria-selected="true"] {
+        background: rgba(59, 130, 246, 0.16) !important;
+        border-color: rgba(96, 165, 250, 0.34) !important;
+    }
+    details[data-testid="stExpander"] {
+        border: 1px solid rgba(148, 163, 184, 0.18) !important;
+        border-radius: 22px !important;
+        background: rgba(15, 23, 42, 0.52) !important;
+        overflow: hidden;
+    }
+    details[data-testid="stExpander"] summary {
+        padding-top: 0.2rem;
+        padding-bottom: 0.2rem;
+        font-size: 1rem;
+        font-weight: 600;
+        color: #f8fbff;
+    }
+    div[data-testid="stStatusWidget"] {
+        border-radius: 22px;
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        background: rgba(15, 23, 42, 0.72);
+    }
+    .material-sym {
+        font-family: 'Material Symbols Outlined';
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        font-size: 1.2rem;
+        vertical-align: -0.22em;
+        margin-right: 0.35rem;
+        user-select: none;
+    }
+
+    @media (max-width: 900px) {
+        .ra-summary-head, .ra-summary-grid {
+            grid-template-columns: 1fr;
+            display: grid;
+        }
+        .ra-summary-head {
+            gap: 0.8rem;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -223,18 +650,59 @@ if "discovery_results" not in st.session_state:
     st.session_state.discovery_results = []
 
 # ── Main area ─────────────────────────────────────────────────────────────────
-st.markdown("## Research Agent")
-st.markdown("Start with your research topic, then either upload papers to score or let the agent hunt for journals.")
+total = len(st.session_state.results)
+fits = sum(1 for r in st.session_state.results if r.get("fit"))
+d_total = len(st.session_state.discovery_results)
 
-if st.session_state.results or st.session_state.discovery_results:
-    total = len(st.session_state.results)
-    fits = sum(1 for r in st.session_state.results if r.get("fit"))
-    d_total = len(st.session_state.discovery_results)
-    st.caption(f"Papers processed: {total} | Relevant: {fits}/{total} | Discovery runs: {d_total}")
-    if st.button("🗑 Clear all results"):
-        st.session_state.results = []
-        st.session_state.discovery_results = []
-        st.rerun()
+st.markdown(
+    f"""
+    <section class="ra-hero">
+        <div class="ra-eyebrow">Research workflow</div>
+        <h1 class="ra-hero-title">Evaluate papers with a cleaner decision dashboard.</h1>
+        <p class="ra-hero-copy">
+            Define your topic once, then either score uploaded PDFs or run discovery to surface high-fit journal work with traceable reasoning.
+        </p>
+        {_build_stats_grid_html([
+            ("Papers reviewed", str(total), "Uploaded PDF evaluations"),
+            ("Relevant matches", f"{fits}/{total}" if total else "0", "Current fit outcomes"),
+            ("Discovery runs", str(d_total), "Topic-led search passes"),
+        ])}
+    </section>
+    """,
+    unsafe_allow_html=True,
+)
+
+intro_col, utility_col = st.columns([1.55, 0.95], gap="large")
+with intro_col:
+    st.markdown(
+        _build_section_intro_html(
+            "Topic setup",
+            "Start with a precise research focus",
+            "A tighter topic gives the agent better summaries, stronger qualification calls, and cleaner evidence matrices.",
+        ),
+        unsafe_allow_html=True,
+    )
+with utility_col:
+    info_items = [
+        "Upload PDFs when you already have candidate papers.",
+        "Use discovery when you want the agent to search and qualify works.",
+        "Trace views remain available for every completed run.",
+    ]
+    if total or d_total:
+        info_items[0] = "The workspace already contains saved review results."
+    st.markdown(
+        _build_info_panel_html(
+            "How this workspace is organized",
+            "The layout is now split into a clearer input area, action controls, and review-ready result cards.",
+            info_items,
+        ),
+        unsafe_allow_html=True,
+    )
+    if total or d_total:
+        if st.button("Clear all results", icon=":material/delete_sweep:"):
+            st.session_state.results = []
+            st.session_state.discovery_results = []
+            st.rerun()
 
 topic_input = st.text_area(
     "What is your research topic?",
@@ -243,6 +711,14 @@ topic_input = st.text_area(
 )
 st.session_state.research_focus = (topic_input or "").strip()
 
+st.markdown(
+    _build_section_intro_html(
+        "Workflow mode",
+        "Choose how you want to evaluate evidence",
+        "Switch between scoring your own PDFs and letting the agent discover qualified journal works for the topic.",
+    ),
+    unsafe_allow_html=True,
+)
 has_papers = st.radio(
     "Do you already have PDFs/journals to score?",
     ["Yes", "No"],
@@ -250,7 +726,14 @@ has_papers = st.radio(
 )
 
 if has_papers == "Yes":
-    st.markdown("Upload one or more PDFs and the agent will score fit against your topic.")
+    st.markdown(
+        _build_section_intro_html(
+            "PDF scoring",
+            "Upload papers for direct fit scoring",
+            "Each paper gets a score, a decision badge, a structured evidence matrix, and a full agent trace.",
+        ),
+        unsafe_allow_html=True,
+    )
     uploaded_files = st.file_uploader(
         "Upload PDFs",
         type=["pdf"],
@@ -263,13 +746,22 @@ if has_papers == "Yes":
         new_files = [f for f in uploaded_files if f.name not in already_processed]
 
         if new_files:
-            st.markdown(f"**{len(new_files)} new paper(s) to process.**")
-            if st.button(f"▶ Score {len(new_files)} paper(s)", type="primary"):
+            st.markdown(
+                _build_stats_grid_html(
+                    [
+                        ("Selected files", str(len(uploaded_files)), "Current upload batch"),
+                        ("New to process", str(len(new_files)), "Ready for scoring"),
+                        ("Already scored", str(len(uploaded_files) - len(new_files)), "Skipped duplicates"),
+                    ]
+                ),
+                unsafe_allow_html=True,
+            )
+            if st.button(f"Score {len(new_files)} paper(s)", type="primary", icon=":material/play_arrow:"):
                 progress = st.progress(0)
                 status = st.empty()
 
                 for i, uploaded_file in enumerate(new_files):
-                    status.markdown(f"⏳ Processing **{uploaded_file.name}**...")
+                    status.markdown(f":material/hourglass_empty: Processing **{uploaded_file.name}**...")
 
                     try:
                         pdf_bytes = uploaded_file.read()
@@ -297,13 +789,13 @@ if has_papers == "Yes":
                             result = run_pipeline_stream(pipeline, initial_state, live_trace, uploaded_file.name)
                             if result.get("error"):
                                 run_status.update(
-                                    label=f"⚠️ Interrupted `{uploaded_file.name}` (partial results kept)",
+                                    label=f":material/warning: Interrupted `{uploaded_file.name}` (partial results kept)",
                                     state="error",
                                     expanded=True,
                                 )
                             else:
                                 run_status.update(
-                                    label=f"✅ Finished `{uploaded_file.name}`",
+                                    label=f":material/check_circle: Finished `{uploaded_file.name}`",
                                     state="complete",
                                     expanded=False,
                                 )
@@ -335,16 +827,36 @@ if has_papers == "Yes":
 
                 status.empty()
                 progress.empty()
-                st.success("✅ Done! Results below.")
+                st.success(":material/check_circle: Done! Results below.")
                 st.rerun()
     elif uploaded_files and not st.session_state.research_focus:
         st.warning("Please add your research topic first.")
 else:
-    st.markdown("No papers yet? Let the agent hunt and qualify top journal works for your topic.")
-    max_rounds = st.number_input("Max rounds", min_value=1, max_value=12, value=5)
-    batch_size = st.number_input("Candidates per round", min_value=3, max_value=20, value=8)
+    st.markdown(
+        _build_section_intro_html(
+            "Discovery",
+            "Let the agent search and qualify journals",
+            "Discovery runs evaluate candidate papers in rounds and keep only the strongest topical and scholarly matches.",
+        ),
+        unsafe_allow_html=True,
+    )
+    config_col1, config_col2 = st.columns(2)
+    with config_col1:
+        max_rounds = st.number_input("Max rounds", min_value=1, max_value=12, value=5)
+    with config_col2:
+        batch_size = st.number_input("Candidates per round", min_value=3, max_value=20, value=8)
+    st.markdown(
+        _build_stats_grid_html(
+            [
+                ("Round limit", str(int(max_rounds)), "How many search passes to allow"),
+                ("Candidates / round", str(int(batch_size)), "Papers screened each pass"),
+                ("Target qualified", "2", "Current stop threshold"),
+            ]
+        ),
+        unsafe_allow_html=True,
+    )
     can_hunt = bool(st.session_state.research_focus)
-    if st.button("▶ Hunt journals for me", type="primary", disabled=not can_hunt):
+    if st.button("Hunt journals for me", type="primary", disabled=not can_hunt, icon=":material/play_arrow:"):
         topic = st.session_state.research_focus
         initial_state = {
             "filename": f"discovery:{topic}",
@@ -370,9 +882,13 @@ else:
             live_trace = st.empty()
             result = run_pipeline_stream(discovery_pipeline, initial_state, live_trace, f"topic:{topic}")
             if result.get("error"):
-                run_status.update(label="⚠️ Topic agent interrupted (partial results kept)", state="error", expanded=True)
+                run_status.update(
+                    label=":material/warning: Topic agent interrupted (partial results kept)",
+                    state="error",
+                    expanded=True,
+                )
             else:
-                run_status.update(label="✅ Topic agent finished", state="complete", expanded=False)
+                run_status.update(label=":material/check_circle: Topic agent finished", state="complete", expanded=False)
         st.session_state.discovery_results.append(result)
         st.rerun()
     if not can_hunt:
@@ -380,8 +896,15 @@ else:
 
 # ── Results ───────────────────────────────────────────────────────────────────
 if st.session_state.results:
-    st.markdown("---")
-    st.markdown("## Results")
+    st.divider()
+    st.markdown(
+        _build_section_intro_html(
+            "Reviewed papers",
+            "Scored PDF results",
+            "Results are sorted by relevance score so the strongest matches surface first.",
+        ),
+        unsafe_allow_html=True,
+    )
 
     # Sort: relevant first
     sorted_results = sorted(
@@ -393,39 +916,46 @@ if st.session_state.results:
     for result in sorted_results:
         filename = result.get("filename", "Unknown")
         error = result.get("error")
+        score = float(result.get("relevance_score", 0) or 0.0)
+        fit = bool(result.get("fit", False))
+        score_tone = "positive" if fit else "negative"
+        status_label = "Relevant" if fit else "Not relevant"
+        expander_label = f"{status_label} · {score:.2f} · {filename}"
 
-        with st.expander(f"📄 {filename}", expanded=False):
+        with st.expander(f":material/description: {expander_label}", expanded=False):
             if error:
-                st.error(f"❌ Error: {error}")
+                st.error(f":material/error: Error: {error}")
                 continue
 
-            score = result.get("relevance_score", 0)
-            fit = result.get("fit", False)
-
-            col1, col2 = st.columns([1, 3])
-
-            with col1:
-                fit_html = (
-                    '<div class="fit-yes">✅ RELEVANT</div>'
-                    if fit else
-                    '<div class="fit-no">❌ NOT RELEVANT</div>'
-                )
-                st.markdown(fit_html, unsafe_allow_html=True)
-                st.markdown(f"**Relevance score:** `{score:.2f}`")
-                score_pct = int(score * 100)
-                st.markdown(
-                    f'<div class="score-bar-wrap"><div style="background:{"#4ade80" if fit else "#f87171"};'
-                    f'width:{score_pct}%;height:8px;border-radius:4px;"></div></div>',
-                    unsafe_allow_html=True,
-                )
-
-            with col2:
-                st.markdown(f"**Why:** {result.get('relevance_reason', '')}")
-
-            st.markdown("---")
+            st.markdown(
+                _build_summary_card_html(
+                    title=filename,
+                    eyebrow="PDF evaluation",
+                    badges=[
+                        _build_badge_html(status_label, score_tone, "check_circle" if fit else "cancel"),
+                        _build_badge_html("Trace available", "neutral", "account_tree"),
+                    ],
+                    score=score,
+                    score_label="Relevance score",
+                    reason_label="Decision rationale",
+                    reason=result.get("relevance_reason", ""),
+                    metadata=[
+                        ("Summary", "Ready" if result.get("summary") else "Missing"),
+                        ("Matrix", "Ready" if result.get("source_profile") else "Missing"),
+                    ],
+                    tone=score_tone,
+                ),
+                unsafe_allow_html=True,
+            )
 
             tab1, tab2, tab3, tab4, tab5 = st.tabs(
-                ["📝 Summary", "🔑 Key Findings", "🔧 Methodology", "📊 Evidence Matrix", "🧭 Agent trace"]
+                [
+                    ":material/notes: Summary",
+                    ":material/vpn_key: Key Findings",
+                    ":material/build: Methodology",
+                    ":material/table_chart: Evidence Matrix",
+                    ":material/account_tree: Agent trace",
+                ]
             )
 
             with tab1:
@@ -451,54 +981,80 @@ if st.session_state.results:
                 write_trace_steps(trace)
 
 if st.session_state.discovery_results:
-    st.markdown("---")
-    st.markdown("## Discovery Results")
+    st.divider()
+    st.markdown(
+        _build_section_intro_html(
+            "Discovery runs",
+            "Qualified journal matches",
+            "Each run keeps the strongest candidates together with the evidence matrix, abstract, links, and underlying trace.",
+        ),
+        unsafe_allow_html=True,
+    )
     for i, run in enumerate(reversed(st.session_state.discovery_results), start=1):
         topic = run.get("topic", "Unknown topic")
         qualified = run.get("qualified_works") or []
         err = run.get("error")
-        with st.expander(f"🔎 Run {i} — {topic}", expanded=False):
+        with st.expander(
+            f":material/manage_search: Run {i} · {len(qualified)} qualified · {topic}",
+            expanded=False,
+        ):
             if err:
                 st.error(err)
                 continue
-            st.markdown(f"**Qualified works:** {len(qualified)}")
+            st.markdown(
+                _build_stats_grid_html(
+                    [
+                        ("Qualified works", str(len(qualified)), "Works kept after evaluation"),
+                        ("Topic", topic[:36] + ("..." if len(topic) > 36 else ""), "Current research focus"),
+                        ("Trace", "Available", "Discovery pipeline history"),
+                    ]
+                ),
+                unsafe_allow_html=True,
+            )
             if not qualified:
                 st.info("No qualified works found within current limits.")
             for idx, item in enumerate(qualified[:2], start=1):
-                st.markdown(f"### {idx}. {item.get('title', 'Untitled')}")
-                meta = f"{item.get('venue', 'Unknown venue')} | {item.get('year', 'n/a')} | citations: {item.get('cited_by_count', 0)}"
-                st.caption(meta)
-
                 score = float(item.get("score") or 0.0)
                 fit = bool(item.get("fit"))
                 quality = bool(item.get("quality"))
-                score_pct = max(0, min(100, int(score * 100)))
-                fit_badge = (
-                    '<div class="fit-yes">✅ TOPIC FIT</div>'
-                    if fit else
-                    '<div class="fit-no">❌ TOPIC MISMATCH</div>'
+                tone = "positive" if fit and quality else "warning"
+                st.markdown(
+                    _build_summary_card_html(
+                        title=f"{idx}. {item.get('title', 'Untitled')}",
+                        eyebrow="Qualified discovery match",
+                        badges=[
+                            _build_badge_html(
+                                "Topic fit" if fit else "Topic mismatch",
+                                "positive" if fit else "negative",
+                                "check_circle" if fit else "cancel",
+                            ),
+                            _build_badge_html(
+                                "Scholarly quality" if quality else "Quality risk",
+                                "positive" if quality else "warning",
+                                "verified" if quality else "report",
+                            ),
+                        ],
+                        score=score,
+                        score_label="Qualification score",
+                        reason_label="Why this qualified",
+                        reason=item.get("reason", "No rationale returned."),
+                        metadata=[
+                            ("Venue", str(item.get("venue", "Unknown venue"))),
+                            ("Year", str(item.get("year", "n/a"))),
+                            ("Citations", str(item.get("cited_by_count", 0))),
+                        ],
+                        tone=tone,
+                    ),
+                    unsafe_allow_html=True,
                 )
-                quality_badge = (
-                    '<div class="fit-yes">✅ SCHOLARLY QUALITY</div>'
-                    if quality else
-                    '<div class="fit-no">❌ QUALITY RISK</div>'
-                )
-
-                c1, c2 = st.columns([1, 3])
-                with c1:
-                    st.markdown(fit_badge, unsafe_allow_html=True)
-                    st.markdown(quality_badge, unsafe_allow_html=True)
-                    st.markdown(f"**Score:** `{score:.2f}`")
-                    st.markdown(
-                        f'<div class="score-bar-wrap"><div style="background:#4ade80;'
-                        f'width:{score_pct}%;height:8px;border-radius:4px;"></div></div>',
-                        unsafe_allow_html=True,
-                    )
-                with c2:
-                    st.markdown(f"**Why this qualified:** {item.get('reason', 'No rationale returned.')}")
 
                 tab_overview, tab_matrix, tab_abstract, tab_links = st.tabs(
-                    ["📌 Overview", "📊 Evidence Matrix", "🧾 Abstract", "🔗 Sources"]
+                    [
+                        ":material/push_pin: Overview",
+                        ":material/table_chart: Evidence Matrix",
+                        ":material/article: Abstract",
+                        ":material/link: Sources",
+                    ]
                 )
                 with tab_overview:
                     st.markdown(f"**Venue:** {item.get('venue', 'Unknown venue')}")
@@ -518,7 +1074,7 @@ if st.session_state.discovery_results:
                     if not item.get("doi") and not item.get("url"):
                         st.caption("No external links available for this work.")
                 st.markdown("---")
-            st.markdown("#### 🧭 Agent trace")
+            st.markdown("#### :material/account_tree: Agent trace")
             trace = run.get("trace") or []
             write_trace_flowchart(trace)
             write_trace_steps(trace)
