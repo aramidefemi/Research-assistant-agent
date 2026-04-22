@@ -24,24 +24,24 @@ def _clamp_score(score: float) -> int:
 
 
 def _build_section_intro_html(eyebrow: str, title: str, copy: str) -> str:
-    return f"""
-    <div class="ra-section-intro">
-        <div class="ra-eyebrow">{_html(eyebrow)}</div>
-        <h2 class="ra-section-title">{_html(title)}</h2>
-        <p class="ra-section-copy">{_html(copy)}</p>
-    </div>
-    """
+    return (
+        f'<div class="ra-section-intro">'
+        f'<div class="ra-eyebrow">{_html(eyebrow)}</div>'
+        f'<h2 class="ra-section-title">{_html(title)}</h2>'
+        f'<p class="ra-section-copy">{_html(copy)}</p>'
+        f"</div>"
+    )
 
 
 def _build_stat_card_html(label: str, value: str, hint: str | None = None) -> str:
     hint_html = f'<div class="ra-stat-hint">{_html(hint)}</div>' if hint else ""
-    return f"""
-    <div class="ra-stat-card">
-        <div class="ra-stat-label">{_html(label)}</div>
-        <div class="ra-stat-value">{_html(value)}</div>
-        {hint_html}
-    </div>
-    """
+    return (
+        f'<div class="ra-stat-card">'
+        f'<div class="ra-stat-label">{_html(label)}</div>'
+        f'<div class="ra-stat-value">{_html(value)}</div>'
+        f"{hint_html}"
+        f"</div>"
+    )
 
 
 def _build_stats_grid_html(stats: list[tuple[str, str, str | None]]) -> str:
@@ -52,14 +52,14 @@ def _build_stats_grid_html(stats: list[tuple[str, str, str | None]]) -> str:
 
 def _build_info_panel_html(title: str, copy: str, items: list[str]) -> str:
     items_html = "".join(f"<li>{_html(item)}</li>" for item in items)
-    return f"""
-    <div class="ra-info-panel">
-        <div class="ra-eyebrow">Workspace guide</div>
-        <h3 class="ra-panel-title">{_html(title)}</h3>
-        <p class="ra-panel-copy">{_html(copy)}</p>
-        <ul class="ra-info-list">{items_html}</ul>
-    </div>
-    """
+    return (
+        f'<div class="ra-info-panel">'
+        f'<div class="ra-eyebrow">Workspace guide</div>'
+        f'<h3 class="ra-panel-title">{_html(title)}</h3>'
+        f'<p class="ra-panel-copy">{_html(copy)}</p>'
+        f'<ul class="ra-info-list">{items_html}</ul>'
+        f"</div>"
+    )
 
 
 def _build_badge_html(label: str, tone: str = "neutral", icon: str | None = None) -> str:
@@ -99,29 +99,27 @@ def _build_summary_card_html(
     badge_html = "".join(badges)
     meta_html = _build_meta_row_html(metadata)
     score_pct = _clamp_score(score)
-    return f"""
-    <div class="ra-summary-card">
-        <div class="ra-summary-head">
-            <div>
-                <div class="ra-eyebrow">{_html(eyebrow)}</div>
-                <h3 class="ra-summary-title">{_html(title)}</h3>
-            </div>
-            <div class="ra-badge-row">{badge_html}</div>
-        </div>
-        <div class="ra-summary-grid">
-            <div class="ra-score-card">
-                <div class="ra-score-label">{_html(score_label)}</div>
-                <div class="ra-score-value">{score_pct}<span>/100</span></div>
-                {_build_progress_html(score, tone)}
-            </div>
-            <div class="ra-reason-card">
-                <div class="ra-score-label">{_html(reason_label)}</div>
-                <p class="ra-reason-copy">{_html(reason or "No rationale returned.")}</p>
-                {meta_html}
-            </div>
-        </div>
-    </div>
-    """
+    return (
+        f'<div class="ra-summary-card">'
+        f'<div class="ra-summary-head">'
+        f'<div><div class="ra-eyebrow">{_html(eyebrow)}</div>'
+        f'<h3 class="ra-summary-title">{_html(title)}</h3></div>'
+        f'<div class="ra-badge-row">{badge_html}</div>'
+        f"</div>"
+        f'<div class="ra-summary-grid">'
+        f'<div class="ra-score-card">'
+        f'<div class="ra-score-label">{_html(score_label)}</div>'
+        f'<div class="ra-score-value">{score_pct}<span>/100</span></div>'
+        f"{_build_progress_html(score, tone)}"
+        f"</div>"
+        f'<div class="ra-reason-card">'
+        f'<div class="ra-score-label">{_html(reason_label)}</div>'
+        f'<p class="ra-reason-copy">{_html(reason or "No rationale returned.")}</p>'
+        f"{meta_html}"
+        f"</div>"
+        f"</div>"
+        f"</div>"
+    )
 
 
 SOURCE_MATRIX_FIELDS = [
@@ -350,7 +348,7 @@ st.markdown("""
         font-size: 1rem;
     }
     .ra-section-intro {
-        margin: 0.2rem 0 0.85rem 0;
+        margin: 0.35rem 0 1.15rem 0;
     }
     .ra-section-title {
         font-size: 1.25rem;
@@ -364,8 +362,8 @@ st.markdown("""
     .ra-stat-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 0.85rem;
-        margin: 1rem 0 0 0;
+        gap: 1rem;
+        margin: 1rem 0 1.35rem 0;
     }
     .ra-stat-card, .ra-info-panel, .ra-summary-card {
         background: var(--ra-surface);
@@ -398,7 +396,7 @@ st.markdown("""
 
     .ra-info-panel {
         padding: 1.2rem 1.25rem;
-        margin-top: 0.4rem;
+        margin: 0.6rem 0 1rem 0;
     }
     .ra-panel-title {
         font-size: 1.05rem;
@@ -453,7 +451,7 @@ st.markdown("""
 
     .ra-summary-card {
         padding: 1.2rem 1.2rem 1.1rem 1.2rem;
-        margin-bottom: 1rem;
+        margin: 0.25rem 0 1.2rem 0;
     }
     .ra-summary-head {
         display: flex;
@@ -558,6 +556,9 @@ st.markdown("""
         border: 1px solid rgba(148, 163, 184, 0.18) !important;
         border-radius: 16px !important;
     }
+    .stTextArea {
+        margin-bottom: 0.85rem;
+    }
     .stTextArea textarea:focus,
     div[data-baseweb="input"] input:focus,
     div[data-baseweb="base-input"] input:focus {
@@ -581,6 +582,7 @@ st.markdown("""
     }
     div[data-baseweb="tab-list"] {
         gap: 0.45rem;
+        margin: 0.55rem 0 0.9rem 0;
     }
     button[role="tab"] {
         border-radius: 999px !important;
@@ -597,6 +599,7 @@ st.markdown("""
         border-radius: 22px !important;
         background: rgba(15, 23, 42, 0.52) !important;
         overflow: hidden;
+        margin: 0 0 1.05rem 0;
     }
     details[data-testid="stExpander"] summary {
         padding-top: 0.2rem;
