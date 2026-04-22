@@ -657,24 +657,6 @@ total = len(st.session_state.results)
 fits = sum(1 for r in st.session_state.results if r.get("fit"))
 d_total = len(st.session_state.discovery_results)
 
-st.markdown(
-    f"""
-    <section class="ra-hero">
-        <div class="ra-eyebrow">Research workflow</div>
-        <h1 class="ra-hero-title">Evaluate papers with a cleaner decision dashboard.</h1>
-        <p class="ra-hero-copy">
-            Define your topic once, then either score uploaded PDFs or run discovery to surface high-fit journal work with traceable reasoning.
-        </p>
-        {_build_stats_grid_html([
-            ("Papers reviewed", str(total), "Uploaded PDF evaluations"),
-            ("Relevant matches", f"{fits}/{total}" if total else "0", "Current fit outcomes"),
-            ("Discovery runs", str(d_total), "Topic-led search passes"),
-        ])}
-    </section>
-    """,
-    unsafe_allow_html=True,
-)
-
 intro_col, utility_col = st.columns([1.55, 0.95], gap="large")
 with intro_col:
     st.markdown(
