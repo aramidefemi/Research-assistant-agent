@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from graph.state import PaperState
+from paper_graph.state import PaperState
 
 # Human-readable labels for trace `node` ids (UI + flowcharts).
 TRACE_NODE_LABELS: dict[str, str] = {

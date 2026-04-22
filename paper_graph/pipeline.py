@@ -1,7 +1,7 @@
 from langgraph.graph import StateGraph, END
 
-from graph.state import PaperState
-from graph.nodes import (
+from paper_graph.state import PaperState
+from paper_graph.nodes import (
     extract_node,
     summarise_node,
     evaluate_score_fit_node,

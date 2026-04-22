@@ -5,8 +5,8 @@ import time
 
 import streamlit as st
 
-from graph.state import PaperState
-from graph.trace import append_trace
+from paper_graph.state import PaperState
+from paper_graph.trace import append_trace
 from typing import Any, Literal
 
 from utils.prompts import (

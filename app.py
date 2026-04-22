@@ -7,8 +7,8 @@ from typing import Any
 from utils.pdf_reader import extract_text_from_pdf
 from utils.trace_store import persist_pipeline_run
 from utils.trace_flowchart import build_trace_flowchart_dot
-from graph.pipeline import pipeline, discovery_pipeline
-from graph.trace import trace_step_title
+from paper_graph.pipeline import pipeline, discovery_pipeline
+from paper_graph.trace import trace_step_title
 
 SOURCE_MATRIX_FIELDS = [
     ("authors", "Author/s"),

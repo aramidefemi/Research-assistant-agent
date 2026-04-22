@@ -16,7 +16,7 @@ flowchart TD
   CHOICE -->|PDF upload| P0[pipeline]
 ```
 
-Compiled graphs live in `graph/pipeline.py` as singletons `pipeline` and `discovery_pipeline`.
+Compiled graphs live in `paper_graph/pipeline.py` as singletons `pipeline` and `discovery_pipeline`.
 
 ## Topic discovery flow (primary)
 
@@ -56,7 +56,7 @@ flowchart LR
 | `discovery_prepare_candidates` | Builds `candidate_queue` from triaged results. |
 | `discovery_pick_candidate` | Pops one `current_candidate` (or empty → round boundary). |
 | `discovery_evaluate_candidate` | **One LLM call** outputs `SCORE`, `FIT`, `QUALITY`, `REASON`. Results are **cached** per topic + work identity (see below). |
-| `route_after_discovery_evaluate` | **Early exit:** skips matrix extraction when `FIT=NO` or score is below a floor (see `graph/nodes.py`). |
+| `route_after_discovery_evaluate` | **Early exit:** skips matrix extraction when `FIT=NO` or score is below a floor (see `paper_graph/nodes.py`). |
 | `discovery_eval_early_exit` | Trace step + empty `candidate_source_profile` when early exit applies. |
 | `discovery_source_profile` | Evidence matrix: **rule-based** (metadata + reason only) when fit + score are high enough; otherwise **LLM** JSON extraction. Trace `result.profile_mode` is `rule` or `llm`. |
 | `discovery_finalize_candidate` | Merges into `evaluated_candidates` / `qualified_works`; clears per-candidate scratch fields. |
@@ -69,7 +69,7 @@ flowchart LR
 
 ### Discovery efficiency knobs (implementation)
 
-Constants live in `graph/nodes.py` next to the discovery nodes:
+Constants live in `paper_graph/nodes.py` next to the discovery nodes:
 
 | Idea | Mechanism |
 |------|-----------|
@@ -108,7 +108,7 @@ flowchart LR
 
 ## Shared state (`PaperState`)
 
-`graph/state.py` holds shared and mode-specific fields.
+`paper_graph/state.py` holds shared and mode-specific fields.
 
 - **Core:** `filename`, `error`, `trace`
 - **PDF:** `pdf_text`, `summary`, `key_findings`, `methodology`, `relevance_score`, `fit`, `relevance_reason`, `source_profile`
@@ -129,7 +129,7 @@ This keeps node work small, reduces bursty per-node spikes, and lets the orchest
 
 ## Boundaries
 
-- **Orchestration:** `graph/pipeline.py`, `graph/nodes.py`
+- **Orchestration:** `paper_graph/pipeline.py`, `paper_graph/nodes.py`
 - **LLM calls + throttling:** `utils/gemini_llm.py`
 - **External journal search:** `utils/journal_search.py`
 - **Prompts:** `utils/prompts.py`

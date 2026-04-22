@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from typing import Any
 
-from graph.trace import trace_step_title
+from paper_graph.trace import trace_step_title
 
 _SAFE_ID_RE = re.compile(r"[^a-zA-Z0-9_]")
 

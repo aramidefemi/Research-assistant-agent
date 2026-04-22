@@ -35,7 +35,7 @@ research-assistant/
 ├── docs/
 │   └── agent-architecture.md  # LangGraph nodes, state, tracing
 ├── app.py                   # Streamlit UI
-├── graph/
+├── paper_graph/
 │   ├── state.py             # LangGraph state (includes optional trace)
 │   ├── trace.py             # trace step helpers
 │   ├── nodes.py             # extract / summarise / evaluate nodes
