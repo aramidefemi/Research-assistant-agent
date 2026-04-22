@@ -14,12 +14,13 @@ from graph.nodes import (
     discovery_triage_candidates_node,
     discovery_prepare_candidates_node,
     discovery_pick_candidate_node,
-    discovery_score_fit_node,
-    discovery_quality_reason_node,
+    discovery_evaluate_candidate_node,
+    discovery_eval_early_exit_node,
     discovery_source_profile_node,
     discovery_finalize_candidate_node,
     discovery_round_check_node,
     route_discovery_candidate,
+    route_after_discovery_evaluate,
     route_after_discovery_finalize,
     route_discovery_loop,
 )
@@ -62,8 +63,8 @@ def build_discovery_pipeline():
     graph.add_node("discovery_triage_candidates", discovery_triage_candidates_node)
     graph.add_node("discovery_prepare_candidates", discovery_prepare_candidates_node)
     graph.add_node("discovery_pick_candidate", discovery_pick_candidate_node)
-    graph.add_node("discovery_score_fit", discovery_score_fit_node)
-    graph.add_node("discovery_quality_reason", discovery_quality_reason_node)
+    graph.add_node("discovery_evaluate_candidate", discovery_evaluate_candidate_node)
+    graph.add_node("discovery_eval_early_exit", discovery_eval_early_exit_node)
     graph.add_node("discovery_source_profile", discovery_source_profile_node)
     graph.add_node("discovery_finalize_candidate", discovery_finalize_candidate_node)
     graph.add_node("discovery_round_check", discovery_round_check_node)
@@ -77,14 +78,21 @@ def build_discovery_pipeline():
         "discovery_pick_candidate",
         route_discovery_candidate,
         {
-            "score_fit": "discovery_score_fit",
+            "evaluate": "discovery_evaluate_candidate",
             "round_check": "discovery_round_check",
             "end": END,
         },
     )
-    graph.add_edge("discovery_score_fit", "discovery_quality_reason")
-    graph.add_edge("discovery_quality_reason", "discovery_source_profile")
+    graph.add_conditional_edges(
+        "discovery_evaluate_candidate",
+        route_after_discovery_evaluate,
+        {
+            "profile": "discovery_source_profile",
+            "early_exit": "discovery_eval_early_exit",
+        },
+    )
     graph.add_edge("discovery_source_profile", "discovery_finalize_candidate")
+    graph.add_edge("discovery_eval_early_exit", "discovery_finalize_candidate")
     graph.add_conditional_edges(
         "discovery_finalize_candidate",
         route_after_discovery_finalize,

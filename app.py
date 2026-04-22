@@ -8,6 +8,7 @@ from utils.pdf_reader import extract_text_from_pdf
 from utils.trace_store import persist_pipeline_run
 from utils.trace_flowchart import build_trace_flowchart_dot
 from graph.pipeline import pipeline, discovery_pipeline
+from graph.trace import trace_step_title
 
 SOURCE_MATRIX_FIELDS = [
     ("authors", "Author/s"),
@@ -64,7 +65,8 @@ def write_trace_steps(trace: list, *, idle_msg: str | None = "No trace entries f
         st.caption(f"LLM-timed steps total ≈ **{total_ms:.0f} ms**")
     for i, step in enumerate(trace, start=1):
         node = step.get("node", "?")
-        with st.expander(f"Step {i} — {node}", expanded=(i <= 2)):
+        title = trace_step_title(str(node))
+        with st.expander(f"Step {i} — {title}", expanded=(i <= 2)):
             st.markdown(step.get("contribution", ""))
             det = step.get("detail") or ""
             if det:

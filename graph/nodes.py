@@ -1,24 +1,83 @@
-import time
+import hashlib
 import json
+import threading
+import time
 
 import streamlit as st
 
 from graph.state import PaperState
 from graph.trace import append_trace
-from typing import Literal
+from typing import Any, Literal
 
 from utils.prompts import (
     SUMMARISE_PROMPT,
     EVALUATE_SCORE_FIT_PROMPT,
     EVALUATE_REASON_PROMPT,
     EVALUATION_MATRIX_PROMPT,
-    DISCOVERY_SCORE_FIT_PROMPT,
-    DISCOVERY_QUALITY_REASON_PROMPT,
+    DISCOVERY_EVALUATE_CANDIDATE_PROMPT,
     DISCOVERY_SOURCE_PROFILE_PROMPT,
     DISCOVERY_ABSTRACT_TRIAGE_PROMPT,
 )
 from utils.gemini_llm import invoke_gemini_prompt
 from utils.journal_search import search_journals
+
+# Skip LLM source-profile extraction when topical fit + score already imply high confidence.
+DISCOVERY_PROFILE_RULE_SCORE_MIN = 0.65
+
+# After scoring: skip matrix/source-profile step for clear rejects (saves rule + LLM work).
+DISCOVERY_EVAL_SKIP_PROFILE_BELOW_SCORE = 0.40
+
+# Bump when the discovery-eval prompt or parsing contract changes (invalidates cache entries).
+DISCOVERY_EVAL_CACHE_VERSION = 1
+DISCOVERY_EVAL_CACHE_MAX = 384
+_DISCOVERY_EVAL_CACHE_FALLBACK: dict[str, dict[str, Any]] = {}
+_DISCOVERY_EVAL_CACHE_FALLBACK_LOCK = threading.Lock()
+
+
+def _discovery_eval_cache_bucket() -> dict[str, dict[str, Any]]:
+    try:
+        k = "_discovery_eval_cache_v1"
+        if k not in st.session_state:
+            st.session_state[k] = {}
+        return st.session_state[k]  # type: ignore[return-value]
+    except Exception:
+        return _DISCOVERY_EVAL_CACHE_FALLBACK
+
+
+def _discovery_eval_cache_key(topic: str, candidate: dict[str, Any]) -> str:
+    doi = str(candidate.get("doi") or "")
+    url = str(candidate.get("url") or "")
+    title = str(candidate.get("title") or "")
+    abstract = str(candidate.get("abstract") or "")[:4000]
+    venue = str(candidate.get("venue") or "")
+    year = str(candidate.get("year") or "")
+    cited = str(candidate.get("cited_by_count") or "")
+    raw = (
+        f"v{DISCOVERY_EVAL_CACHE_VERSION}\0{topic}\0{doi}\0{url}\0{title}\0"
+        f"{venue}\0{year}\0{cited}\0{abstract}"
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _discovery_eval_cache_get(key: str) -> dict[str, Any] | None:
+    bucket = _discovery_eval_cache_bucket()
+    if bucket is _DISCOVERY_EVAL_CACHE_FALLBACK:
+        with _DISCOVERY_EVAL_CACHE_FALLBACK_LOCK:
+            return bucket.get(key)
+    return bucket.get(key)
+
+
+def _discovery_eval_cache_set(key: str, payload: dict[str, Any]) -> None:
+    bucket = _discovery_eval_cache_bucket()
+    if bucket is _DISCOVERY_EVAL_CACHE_FALLBACK:
+        with _DISCOVERY_EVAL_CACHE_FALLBACK_LOCK:
+            bucket[key] = payload
+            while len(bucket) > DISCOVERY_EVAL_CACHE_MAX:
+                bucket.pop(next(iter(bucket)))
+        return
+    bucket[key] = payload
+    while len(bucket) > DISCOVERY_EVAL_CACHE_MAX:
+        bucket.pop(next(iter(bucket)))
 
 
 def extract_node(state: PaperState) -> PaperState:
@@ -447,8 +506,8 @@ def discovery_pick_candidate_node(state: PaperState) -> PaperState:
     )
 
 
-def discovery_score_fit_node(state: PaperState) -> PaperState:
-    """Evaluate score + fit for current candidate."""
+def discovery_evaluate_candidate_node(state: PaperState) -> PaperState:
+    """Single LLM pass: relevance (score/fit) + quality + reason."""
     if state.get("error"):
         return state
 
@@ -457,8 +516,41 @@ def discovery_score_fit_node(state: PaperState) -> PaperState:
     if not candidate:
         return state
 
+    cache_key = _discovery_eval_cache_key(topic, candidate)
+    cached = _discovery_eval_cache_get(cache_key)
+    if cached:
+        score = float(cached["score"])
+        fit = bool(cached["fit"])
+        quality = bool(cached["quality"])
+        reason = str(cached["reason"])
+        elapsed_ms = float(cached.get("duration_ms") or 0.0)
+        s2: PaperState = {
+            **state,
+            "candidate_score": score,
+            "candidate_fit": fit,
+            "candidate_quality": quality,
+            "candidate_reason": reason,
+            "candidate_eval_duration_ms": elapsed_ms,
+        }
+        return append_trace(
+            s2,
+            "discovery_evaluate_candidate",
+            f"Evaluated candidate (cached): SCORE={score:.2f}, FIT={'YES' if fit else 'NO'}, "
+            f"QUALITY={'YES' if quality else 'NO'}.",
+            detail=reason[:200],
+            duration_ms=elapsed_ms,
+            result={
+                "candidate_title": candidate.get("title", ""),
+                "score": score,
+                "fit": fit,
+                "quality": quality,
+                "reason": reason,
+                "cache_hit": True,
+            },
+        )
+
     try:
-        prompt = DISCOVERY_SCORE_FIT_PROMPT.format(
+        prompt = DISCOVERY_EVALUATE_CANDIDATE_PROMPT.format(
             topic=topic,
             title=candidate.get("title", ""),
             abstract=candidate.get("abstract", ""),
@@ -470,94 +562,154 @@ def discovery_score_fit_node(state: PaperState) -> PaperState:
         content = invoke_gemini_prompt(prompt)
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         score, fit = _parse_score_fit(content)
-        s2: PaperState = {
+        quality = _parse_yes_no(content, "QUALITY:")
+        reason = _parse_reason(content)
+        _discovery_eval_cache_set(
+            cache_key,
+            {
+                "score": score,
+                "fit": fit,
+                "quality": quality,
+                "reason": reason,
+                "duration_ms": elapsed_ms,
+            },
+        )
+        s2 = {
             **state,
             "candidate_score": score,
             "candidate_fit": fit,
-        }
-        return append_trace(
-            s2,
-            "discovery_score_fit",
-            f"Scored current candidate: SCORE={score:.2f}, FIT={'YES' if fit else 'NO'}.",
-            duration_ms=elapsed_ms,
-            result={
-                "candidate_title": candidate.get("title", ""),
-                "score": score,
-                "fit": fit,
-            },
-        )
-    except Exception as e:
-        return append_trace(
-            {**state, "error": f"Discovery score/fit failed: {str(e)}"},
-            "discovery_score_fit",
-            "Candidate score/fit evaluation failed.",
-            detail=str(e),
-        )
-
-
-def discovery_quality_reason_node(state: PaperState) -> PaperState:
-    """Evaluate quality + reason for current candidate."""
-    if state.get("error"):
-        return state
-
-    topic = (state.get("topic") or "").strip()
-    candidate = state.get("current_candidate")
-    if not candidate:
-        return state
-
-    try:
-        score = float(state.get("candidate_score") or 0.0)
-        fit = bool(state.get("candidate_fit"))
-        prompt = DISCOVERY_QUALITY_REASON_PROMPT.format(
-            topic=topic,
-            title=candidate.get("title", ""),
-            abstract=candidate.get("abstract", ""),
-            venue=candidate.get("venue", ""),
-            year=candidate.get("year", ""),
-            cited_by_count=candidate.get("cited_by_count", 0),
-            score=score,
-            fit_label="YES" if fit else "NO",
-        )
-        t0 = time.perf_counter()
-        content = invoke_gemini_prompt(prompt)
-        elapsed_ms = (time.perf_counter() - t0) * 1000.0
-        quality = _parse_yes_no(content, "QUALITY:")
-        reason = _parse_reason(content)
-        s2: PaperState = {
-            **state,
             "candidate_quality": quality,
             "candidate_reason": reason,
             "candidate_eval_duration_ms": elapsed_ms,
         }
         return append_trace(
             s2,
-            "discovery_quality_reason",
-            f"Assessed scholarly quality: QUALITY={'YES' if quality else 'NO'}.",
+            "discovery_evaluate_candidate",
+            f"Evaluated candidate: SCORE={score:.2f}, FIT={'YES' if fit else 'NO'}, "
+            f"QUALITY={'YES' if quality else 'NO'}.",
             detail=reason[:200],
             duration_ms=elapsed_ms,
             result={
                 "candidate_title": candidate.get("title", ""),
+                "score": score,
+                "fit": fit,
                 "quality": quality,
                 "reason": reason,
+                "cache_hit": False,
             },
         )
     except Exception as e:
         return append_trace(
-            {**state, "error": f"Discovery quality/reason failed: {str(e)}"},
-            "discovery_quality_reason",
-            "Candidate quality/reason evaluation failed.",
+            {**state, "error": f"Discovery candidate evaluation failed: {str(e)}"},
+            "discovery_evaluate_candidate",
+            "Candidate evaluation failed.",
             detail=str(e),
         )
 
 
+def _discovery_skip_source_profile_after_eval(state: PaperState) -> tuple[bool, str]:
+    """Whether to bypass source_profile entirely based on scoring-only thresholds."""
+    if state.get("error"):
+        return False, ""
+    fit = bool(state.get("candidate_fit"))
+    score = float(state.get("candidate_score") or 0.0)
+    if not fit:
+        return True, "FIT=NO"
+    if score < DISCOVERY_EVAL_SKIP_PROFILE_BELOW_SCORE:
+        return True, f"SCORE<{DISCOVERY_EVAL_SKIP_PROFILE_BELOW_SCORE:.2f}"
+    return False, ""
+
+
+def route_after_discovery_evaluate(
+    state: PaperState,
+) -> Literal["profile", "early_exit"]:
+    """After scoring: enrich matrix unless early-exit thresholds say skip."""
+    skip, _ = _discovery_skip_source_profile_after_eval(state)
+    return "early_exit" if skip else "profile"
+
+
+def discovery_eval_early_exit_node(state: PaperState) -> PaperState:
+    """Trace + empty profile when scoring thresholds skip matrix extraction."""
+    _, detail = _discovery_skip_source_profile_after_eval(state)
+    return append_trace(
+        {**state, "candidate_source_profile": {}},
+        "discovery_eval_early_exit",
+        "Early exit after scoring — skipped source profile.",
+        detail=detail or "threshold",
+        duration_ms=0.0,
+        result={"reason": detail or "threshold"},
+    )
+
+
+def _discovery_profile_confidence_high(state: PaperState) -> bool:
+    """High confidence → rule-based matrix; low confidence → LLM extraction."""
+    if state.get("error"):
+        return False
+    if not state.get("candidate_fit"):
+        return False
+    score = float(state.get("candidate_score") or 0.0)
+    return score >= DISCOVERY_PROFILE_RULE_SCORE_MIN
+
+
+def _rule_based_discovery_source_profile(
+    candidate: dict[str, Any],
+    topic: str,
+    *,
+    eval_reason: str,
+) -> dict[str, str]:
+    """Populate evidence-matrix keys from OpenAlex metadata + evaluator reason only (no LLM)."""
+    abstract = str(candidate.get("abstract") or "").strip()
+    venue = str(candidate.get("venue") or "").strip()
+    title = str(candidate.get("title") or "").strip()
+    year = candidate.get("year")
+    excerpt = abstract[:520] + ("…" if len(abstract) > 520 else "")
+    yr = str(year) if year is not None else "N/A"
+    reason_line = (eval_reason or "").strip() or title[:280]
+    return {
+        "authors": "N/A",
+        "date_of_research": yr,
+        "country_of_origin": "N/A",
+        "purpose_aims": topic or "N/A",
+        "research_questions": topic or "N/A",
+        "data_used_method_collection_sample_size": "N/A",
+        "methods_tools_used": "N/A",
+        "method_and_data_collection_limitations": "N/A",
+        "results": excerpt or "N/A",
+        "contribution": reason_line[:600] or "N/A",
+        "limitation_of_research_outcomes": "N/A",
+        "future_perspectives": "N/A",
+    }
+
+
 def discovery_source_profile_node(state: PaperState) -> PaperState:
-    """Extract structured evidence matrix fields for current candidate."""
+    """Structured evidence matrix: rule-based when confidence is high, else LLM."""
     if state.get("error"):
         return state
     candidate = state.get("current_candidate")
     if not candidate:
         return state
     topic = (state.get("topic") or "").strip()
+    eval_reason = str(state.get("candidate_reason") or "")
+
+    if _discovery_profile_confidence_high(state):
+        source_profile = _rule_based_discovery_source_profile(
+            candidate,
+            topic,
+            eval_reason=eval_reason,
+        )
+        return append_trace(
+            {**state, "candidate_source_profile": source_profile},
+            "discovery_source_profile",
+            "Rule-based source profile (high confidence — no LLM).",
+            detail=f"score≥{DISCOVERY_PROFILE_RULE_SCORE_MIN}, FIT=YES",
+            duration_ms=0.0,
+            result={
+                "candidate_title": candidate.get("title", ""),
+                "source_profile": source_profile,
+                "profile_mode": "rule",
+            },
+        )
+
     try:
         prompt = DISCOVERY_SOURCE_PROFILE_PROMPT.format(
             topic=topic,
@@ -578,11 +730,12 @@ def discovery_source_profile_node(state: PaperState) -> PaperState:
         return append_trace(
             s2,
             "discovery_source_profile",
-            "Extracted structured evidence matrix fields from candidate metadata.",
+            "LLM source profile (low confidence — structured extraction).",
             duration_ms=elapsed_ms,
             result={
                 "candidate_title": candidate.get("title", ""),
                 "source_profile": source_profile,
+                "profile_mode": "llm",
             },
         )
     except Exception as e:
@@ -647,7 +800,7 @@ def discovery_finalize_candidate_node(state: PaperState) -> PaperState:
     )
 
 
-def route_discovery_candidate(state: PaperState) -> Literal["score_fit", "round_check", "end"]:
+def route_discovery_candidate(state: PaperState) -> Literal["evaluate", "round_check", "end"]:
     """Route candidate loop: evaluate next candidate or move to round decision."""
     if state.get("error"):
         return "end"
@@ -656,9 +809,9 @@ def route_discovery_candidate(state: PaperState) -> Literal["score_fit", "round_
     if qualified >= target:
         return "end"
     if state.get("current_candidate"):
-        return "score_fit"
+        return "evaluate"
     if state.get("candidate_queue"):
-        return "score_fit"
+        return "evaluate"
     return "round_check"
 
 

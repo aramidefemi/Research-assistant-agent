@@ -5,6 +5,7 @@ import re
 from collections import Counter
 from typing import Any
 
+from graph.trace import trace_step_title
 
 _SAFE_ID_RE = re.compile(r"[^a-zA-Z0-9_]")
 
@@ -15,9 +16,10 @@ def _safe_node_id(name: str) -> str:
 
 
 def _node_label(name: str, count: int) -> str:
+    display = trace_step_title(name)
     if count <= 1:
-        return name
-    return f"{name}\\n({count}x)"
+        return display
+    return f"{display}\\n({count}x)"
 
 
 def build_trace_flowchart_dot(trace: list[dict[str, Any]]) -> str:

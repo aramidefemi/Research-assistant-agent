@@ -106,7 +106,7 @@ The JSON object must contain exactly these keys:
 }}
 """
 
-DISCOVERY_SCORE_FIT_PROMPT = """You are qualifying candidate journal papers for a student research topic.
+DISCOVERY_EVALUATE_CANDIDATE_PROMPT = """You are qualifying candidate journal papers for a student research topic.
 
 Research Topic:
 {topic}
@@ -118,30 +118,14 @@ VENUE: {venue}
 YEAR: {year}
 CITED_BY_COUNT: {cited_by_count}
 
-Score the candidate only for topical relevance.
+In one pass:
+1) Score topical relevance (SCORE, FIT).
+2) Judge whether the work appears to be serious scholarly quality for this topic (QUALITY).
+3) Briefly justify QUALITY in REASON.
 
 Respond in this exact format:
 SCORE: <a number from 0.0 to 1.0>
 FIT: <YES or NO>
-"""
-
-DISCOVERY_QUALITY_REASON_PROMPT = """You are qualifying candidate journal papers for a student research topic.
-
-Research Topic:
-{topic}
-
-Candidate Paper Metadata:
-TITLE: {title}
-ABSTRACT: {abstract}
-VENUE: {venue}
-YEAR: {year}
-CITED_BY_COUNT: {cited_by_count}
-
-Already determined (do not contradict):
-SCORE: {score:.2f}
-FIT: {fit_label}
-
-Respond in this exact format:
 QUALITY: <YES or NO>
 REASON: <2-3 concise sentences>
 """
