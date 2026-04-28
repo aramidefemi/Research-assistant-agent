@@ -494,14 +494,51 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
             state.get("pdf_text", ""),
             topic_hint=str(st.session_state.get("research_focus", "")).strip(),
         )
-        s2: PaperState = _with_fallback_meta({**state, "source_profile": source_profile}, "llm_disabled: matrix fallback used")
+        risk_flags = _extract_methodology_risk_flags(
+            title=str(state.get("filename") or ""),
+            abstract=str(state.get("summary") or ""),
+            source_profile=source_profile,
+            methodology_text=str(state.get("methodology") or ""),
+        )
+        citation_use_examples = _build_pdf_citation_use_examples(
+            {
+                **state,
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+            }
+        )
+        evidence_contract = _build_pdf_evidence_contract(
+            {
+                **state,
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+            },
+            risk_flags,
+        )
+        s2: PaperState = _with_fallback_meta(
+            {
+                **state,
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+                "citation_use_examples": citation_use_examples,
+                "evidence_contract": evidence_contract,
+            },
+            "llm_disabled: matrix fallback used",
+        )
         return append_trace(
             s2,
             "evaluate_matrix",
             "Deterministic source profile fallback (LLM disabled).",
             detail="No-LLM mode enabled.",
             duration_ms=0.0,
-            result={"source_profile": source_profile, "llm_used": False, "fallback_reason": s2.get("fallback_reason", "")},
+            result={
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+                "citation_use_examples": citation_use_examples,
+                "evidence_contract": evidence_contract,
+                "llm_used": False,
+                "fallback_reason": s2.get("fallback_reason", ""),
+            },
         )
 
     try:
@@ -517,13 +554,49 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
         content = invoke_gemini_prompt(prompt)
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         source_profile = _parse_source_profile(content)
-        s2: PaperState = _with_llm_used({**state, "source_profile": source_profile})
+        risk_flags = _extract_methodology_risk_flags(
+            title=str(state.get("filename") or ""),
+            abstract=str(state.get("summary") or ""),
+            source_profile=source_profile,
+            methodology_text=str(state.get("methodology") or ""),
+        )
+        citation_use_examples = _build_pdf_citation_use_examples(
+            {
+                **state,
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+            }
+        )
+        evidence_contract = _build_pdf_evidence_contract(
+            {
+                **state,
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+            },
+            risk_flags,
+        )
+        s2: PaperState = _with_llm_used(
+            {
+                **state,
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+                "citation_use_examples": citation_use_examples,
+                "evidence_contract": evidence_contract,
+            }
+        )
         return append_trace(
             s2,
             "evaluate_matrix",
             "Extracted dedicated evaluation matrix fields from paper content.",
             duration_ms=elapsed_ms,
-            result={"source_profile": source_profile, "llm_used": True, "fallback_reason": s2.get("fallback_reason", "")},
+            result={
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+                "citation_use_examples": citation_use_examples,
+                "evidence_contract": evidence_contract,
+                "llm_used": True,
+                "fallback_reason": s2.get("fallback_reason", ""),
+            },
         )
     except Exception as e:
         err_state = _with_fallback_meta(state, f"llm_error: {str(e)}")
@@ -531,13 +604,47 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
             state.get("pdf_text", ""),
             topic_hint=str(st.session_state.get("research_focus", "")).strip(),
         )
+        risk_flags = _extract_methodology_risk_flags(
+            title=str(state.get("filename") or ""),
+            abstract=str(state.get("summary") or ""),
+            source_profile=source_profile,
+            methodology_text=str(state.get("methodology") or ""),
+        )
+        citation_use_examples = _build_pdf_citation_use_examples(
+            {
+                **state,
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+            }
+        )
+        evidence_contract = _build_pdf_evidence_contract(
+            {
+                **state,
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+            },
+            risk_flags,
+        )
         return append_trace(
-            {**err_state, "source_profile": source_profile},
+            {
+                **err_state,
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+                "citation_use_examples": citation_use_examples,
+                "evidence_contract": evidence_contract,
+            },
             "evaluate_matrix",
             "Matrix LLM failed; deterministic source profile fallback used.",
             detail=str(e),
             duration_ms=0.0,
-            result={"source_profile": source_profile, "llm_used": bool(err_state.get("llm_used", False)), "fallback_reason": err_state.get("fallback_reason", "")},
+            result={
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+                "citation_use_examples": citation_use_examples,
+                "evidence_contract": evidence_contract,
+                "llm_used": bool(err_state.get("llm_used", False)),
+                "fallback_reason": err_state.get("fallback_reason", ""),
+            },
         )
 
 
@@ -1224,28 +1331,6 @@ def discovery_source_profile_node(state: PaperState) -> PaperState:
                 "candidate_title": candidate.get("title", ""),
                 "source_profile": source_profile,
                 "profile_mode": "rule",
-            },
-        )
-
-    if not _llm_enabled(state):
-        source_profile = _rule_based_discovery_source_profile(
-            candidate,
-            topic,
-            eval_reason=eval_reason,
-        )
-        s2 = _with_fallback_meta({**state, "candidate_source_profile": source_profile}, "llm_disabled: discovery profile fallback used")
-        return append_trace(
-            s2,
-            "discovery_source_profile",
-            "Deterministic discovery source profile fallback (LLM disabled).",
-            detail="No-LLM mode enabled.",
-            duration_ms=0.0,
-            result={
-                "candidate_title": candidate.get("title", ""),
-                "source_profile": source_profile,
-                "profile_mode": "rule_no_llm",
-                "llm_used": False,
-                "fallback_reason": s2.get("fallback_reason", ""),
             },
         )
 
