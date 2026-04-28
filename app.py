@@ -855,9 +855,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# quick nav for multipage setup without relying on sidebar
-render_page_nav()
-
 # ── Session state init ────────────────────────────────────────────────────────
 if "results" not in st.session_state:
     st.session_state.results = []
