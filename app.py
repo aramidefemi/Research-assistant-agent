@@ -17,7 +17,12 @@ try:
 except Exception:
     def log_usage_event(event_type: str, payload: dict[str, Any] | None = None) -> None:
         return None
-from utils.nav import render_page_nav
+try:
+    from utils.nav import render_page_nav
+except Exception:
+    def render_page_nav() -> None:
+        st.markdown("[Research workspace](/) · [Admin usage stats](/Admin_Usage_Stats)")
+        return None
 from utils.trace_flowchart import build_trace_flowchart_dot
 from utils.gemini_llm import invoke_gemini_prompt, invoke_gemini_prompt_stream
 from paper_graph.pipeline import pipeline, discovery_pipeline
