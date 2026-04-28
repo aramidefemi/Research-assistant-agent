@@ -133,6 +133,16 @@ def _deterministic_score_fit_for_candidate(topic: str, candidate: dict[str, Any]
     return score, score >= 0.5
 
 
+def _candidate_quality_from_year(candidate: dict[str, Any]) -> bool:
+    year_raw = candidate.get("year")
+    if year_raw is None:
+        return False
+    try:
+        return int(year_raw) >= 2010
+    except (TypeError, ValueError):
+        return False
+
+
 def _discovery_eval_cache_bucket() -> dict[str, dict[str, Any]]:
     try:
         k = "_discovery_eval_cache_v1"
@@ -732,11 +742,23 @@ def discovery_search_node(state: PaperState) -> PaperState:
             },
         )
     except Exception as e:
+        s2: PaperState = {
+            **state,
+            "discovered_candidates": [],
+            "discovery_cursor": page + 1,
+            "discovery_round": int(state.get("discovery_round") or 0) + 1,
+        }
         return append_trace(
-            {**state, "error": f"Journal discovery failed: {str(e)}"},
+            s2,
             "discovery_search",
-            "External journal search failed.",
-            detail=str(e),
+            "External journal search failed; continuing to next round.",
+            detail=str(e)[:220],
+            result={
+                "query": topic,
+                "page": page,
+                "count": 0,
+                "fallback": "skip_round",
+            },
         )
 
 
@@ -880,13 +902,22 @@ def discovery_evaluate_candidate_node(state: PaperState) -> PaperState:
 
     topic = (state.get("topic") or "").strip()
     candidate = state.get("current_candidate")
+    if not candidate:
+        return append_trace(
+            state,
+            "discovery_evaluate_candidate",
+            "No candidate selected for evaluation; skipping.",
+            duration_ms=0.0,
+            result={"skipped": True, "reason": "missing_current_candidate"},
+        )
+
     if not _llm_enabled(state):
         score = _score_focus_overlap(
             f"{candidate.get('title', '')} {candidate.get('abstract', '')}",
             topic,
         )
         fit = score >= 0.25
-        quality = bool(candidate.get("year") and int(candidate.get("year")) >= 2010)
+        quality = _candidate_quality_from_year(candidate)
         reason = (
             f"Deterministic fallback: lexical topic overlap={score:.2f}; "
             f"quality={'YES' if quality else 'NO'} from metadata heuristics."
@@ -920,9 +951,6 @@ def discovery_evaluate_candidate_node(state: PaperState) -> PaperState:
                 "fallback_reason": s2.get("fallback_reason", ""),
             },
         )
-
-    if not candidate:
-        return state
 
     cache_key = _discovery_eval_cache_key(topic, candidate)
     cached = _discovery_eval_cache_get(cache_key)
@@ -1007,11 +1035,43 @@ def discovery_evaluate_candidate_node(state: PaperState) -> PaperState:
             },
         )
     except Exception as e:
+        score = _score_focus_overlap(
+            f"{candidate.get('title', '')} {candidate.get('abstract', '')}",
+            topic,
+        )
+        fit = score >= 0.25
+        quality = _candidate_quality_from_year(candidate)
+        reason = (
+            f"Fallback after evaluator failure: lexical topic overlap={score:.2f}; "
+            f"quality={'YES' if quality else 'NO'} from metadata heuristics."
+        )
+        s2 = _with_fallback_meta(
+            {
+                **state,
+                "candidate_score": score,
+                "candidate_fit": fit,
+                "candidate_quality": quality,
+                "candidate_reason": reason,
+                "candidate_eval_duration_ms": 0.0,
+            },
+            f"llm_error: {str(e)}",
+        )
         return append_trace(
-            {**state, "error": f"Discovery candidate evaluation failed: {str(e)}"},
+            s2,
             "discovery_evaluate_candidate",
-            "Candidate evaluation failed.",
-            detail=str(e),
+            "Candidate evaluator failed; deterministic fallback used.",
+            detail=str(e)[:220],
+            duration_ms=0.0,
+            result={
+                "candidate_title": candidate.get("title", ""),
+                "score": score,
+                "fit": fit,
+                "quality": quality,
+                "reason": reason,
+                "cache_hit": False,
+                "llm_used": bool(s2.get("llm_used", False)),
+                "fallback_reason": s2.get("fallback_reason", ""),
+            },
         )
 
 
@@ -1089,11 +1149,47 @@ def _rule_based_discovery_source_profile(
     }
 
 
-def _extract_methodology_risk_flags(
-    text: str,
+def _build_risk_flag_text_from_parts(
     *,
-    context_label: str,
+    title: str,
+    abstract: str,
+    source_profile: dict[str, str] | None,
+    methodology_text: str,
+) -> tuple[str, str]:
+    profile = source_profile or {}
+    parts = [
+        (title or "").strip(),
+        (abstract or "").strip(),
+        (methodology_text or "").strip(),
+        str(profile.get("methods_tools_used") or "").strip(),
+        str(profile.get("method_and_data_collection_limitations") or "").strip(),
+        str(profile.get("limitation_of_research_outcomes") or "").strip(),
+        str(profile.get("results") or "").strip(),
+    ]
+    text = "\n".join([p for p in parts if p])
+    return text, "composed_context"
+
+
+def _extract_methodology_risk_flags(
+    text: str = "",
+    *,
+    context_label: str = "",
+    title: str = "",
+    abstract: str = "",
+    source_profile: dict[str, str] | None = None,
+    methodology_text: str = "",
 ) -> list[dict[str, str]]:
+    if not text:
+        text, inferred_label = _build_risk_flag_text_from_parts(
+            title=title,
+            abstract=abstract,
+            source_profile=source_profile,
+            methodology_text=methodology_text,
+        )
+        if not context_label:
+            context_label = inferred_label
+    if not context_label:
+        context_label = "direct_text"
     low = (text or "").lower()
     if not low:
         return []
