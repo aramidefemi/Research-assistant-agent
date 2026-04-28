@@ -9,7 +9,11 @@ from urllib import error as urlerror
 from urllib import request as urlrequest
 from collections.abc import Iterator
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional dependency in some deploy targets
+    def load_dotenv() -> None:
+        return None
 from utils.trace_store import log_llm_usage
 
 _ENV_LOADED = False

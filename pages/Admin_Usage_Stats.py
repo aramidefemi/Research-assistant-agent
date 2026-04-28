@@ -1,4 +1,8 @@
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except Exception:
+    def load_dotenv() -> None:
+        return None
 
 load_dotenv()
 

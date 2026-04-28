@@ -6,7 +6,11 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except Exception:
+    def load_dotenv() -> None:
+        return None
 
 _ENV_LOADED = False
 
