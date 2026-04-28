@@ -8,6 +8,7 @@ from typing import Any
 from utils.pdf_reader import extract_text_from_pdf
 from utils.trace_store import persist_pipeline_run
 from utils.trace_flowchart import build_trace_flowchart_dot
+from utils.gemini_llm import invoke_gemini_prompt
 from paper_graph.pipeline import pipeline, discovery_pipeline
 from paper_graph.trace import trace_step_title
 
@@ -215,6 +216,121 @@ def _render_source_matrix(profile: dict[str, str]) -> None:
             }
         )
     st.table(rows)
+
+
+def _split_sentences(text: str) -> list[str]:
+    raw = (text or "").replace("\n", " ").strip()
+    if not raw:
+        return []
+    parts: list[str] = []
+    buf = []
+    for ch in raw:
+        buf.append(ch)
+        if ch in ".!?":
+            sentence = "".join(buf).strip()
+            if sentence:
+                parts.append(sentence)
+            buf = []
+    tail = "".join(buf).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _keyword_overlap_score(question: str, sentence: str) -> int:
+    q_terms = {w.lower() for w in question.split() if len(w) >= 4}
+    if not q_terms:
+        return 0
+    s_terms = {w.lower().strip(".,:;()[]{}") for w in sentence.split()}
+    return len(q_terms.intersection(s_terms))
+
+
+def _deterministic_chat_answer(question: str, docs: list[dict[str, str]]) -> str:
+    ranked: list[tuple[int, str, str]] = []
+    for doc in docs:
+        source = doc["source"]
+        for sent in _split_sentences(doc["text"]):
+            score = _keyword_overlap_score(question, sent)
+            if score > 0:
+                ranked.append((score, sent, source))
+    if not ranked:
+        return (
+            "Insufficient evidence in selected papers to answer confidently.\n\n"
+            "Citations:\n- [none]"
+        )
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    top = ranked[:3]
+    bullets = "\n".join(f"- {sent} [{src}]" for _, sent, src in top)
+    cites = "\n".join(f"- [{src}]" for _, _, src in top)
+    return f"Best evidence from selected papers:\n{bullets}\n\nCitations:\n{cites}"
+
+
+def _build_chat_context_docs() -> list[dict[str, str]]:
+    docs: list[dict[str, str]] = []
+    for result in st.session_state.results:
+        if result.get("error"):
+            continue
+        text = " ".join(
+            [
+                str(result.get("summary") or ""),
+                str(result.get("key_findings") or ""),
+                str(result.get("methodology") or ""),
+            ]
+        ).strip()
+        if not text:
+            continue
+        docs.append({"source": str(result.get("filename") or "pdf"), "text": text})
+    for run in st.session_state.discovery_results:
+        for item in (run.get("qualified_works") or []):
+            text = " ".join(
+                [
+                    str(item.get("abstract") or ""),
+                    str((item.get("source_profile") or {}).get("results") or ""),
+                    str(item.get("reason") or ""),
+                ]
+            ).strip()
+            if not text:
+                continue
+            docs.append({"source": str(item.get("title") or "discovery"), "text": text})
+    return docs
+
+
+def _chat_state_key(selected_sources: list[str], focus: str) -> str:
+    src = "|".join(sorted(selected_sources))
+    return f"chat::{focus.strip()}::{src}"
+
+
+def _answer_paper_chat(
+    question: str,
+    docs: list[dict[str, str]],
+    focus: str,
+    llm_enabled: bool,
+) -> tuple[str, bool, str]:
+    if not llm_enabled:
+        return (
+            _deterministic_chat_answer(question, docs),
+            False,
+            "llm_disabled: chat fallback used",
+        )
+    context_block = "\n\n".join(
+        f"SOURCE: {d['source']}\nTEXT:\n{d['text'][:2200]}" for d in docs
+    )
+    prompt = (
+        "You are a research assistant. Answer only from provided sources.\n"
+        "If evidence is missing, say: 'Insufficient evidence.'\n"
+        "Include a final 'Citations:' section with [SOURCE] anchors.\n\n"
+        f"Research focus:\n{focus or 'N/A'}\n\n"
+        f"Question:\n{question}\n\n"
+        f"Sources:\n{context_block}\n"
+    )
+    try:
+        return (invoke_gemini_prompt(prompt), True, "")
+    except Exception as e:
+        return (
+            _deterministic_chat_answer(question, docs),
+            False,
+            f"llm_error: {str(e)}",
+        )
 
 
 def run_pipeline_stream(graph, initial_state: dict, live_placeholder, run_label: str) -> dict:
@@ -1086,3 +1202,55 @@ if st.session_state.discovery_results:
             trace = run.get("trace") or []
             write_trace_flowchart(trace)
             write_trace_steps(trace)
+
+all_chat_docs = _build_chat_context_docs()
+if all_chat_docs:
+    st.divider()
+    st.markdown(
+        _build_section_intro_html(
+            "Interactive analysis",
+            "Chat with selected papers",
+            "Ask follow-up questions grounded in selected papers. Answers include citation anchors to source titles/files.",
+        ),
+        unsafe_allow_html=True,
+    )
+    source_options = [d["source"] for d in all_chat_docs]
+    selected_sources = st.multiselect(
+        "Select paper sources for chat grounding",
+        options=source_options,
+        default=source_options[: min(3, len(source_options))],
+    )
+    if selected_sources:
+        docs_by_source = {d["source"]: d for d in all_chat_docs}
+        selected_docs = [docs_by_source[s] for s in selected_sources if s in docs_by_source]
+        focus = str(st.session_state.get("research_focus") or "")
+        chat_key = _chat_state_key(selected_sources, focus)
+        if chat_key not in st.session_state:
+            st.session_state[chat_key] = []
+        messages = st.session_state[chat_key]
+        st.caption(f"Chat context: {len(selected_docs)} source(s) · focus: {focus or 'N/A'}")
+        for m in messages:
+            with st.chat_message(m["role"]):
+                st.markdown(m["content"])
+                if m.get("meta"):
+                    st.caption(m["meta"])
+        user_q = st.chat_input("Ask a grounded question about selected papers")
+        if user_q:
+            messages.append({"role": "user", "content": user_q, "meta": ""})
+            with st.chat_message("user"):
+                st.markdown(user_q)
+            with st.chat_message("assistant"):
+                answer, llm_used_chat, fallback = _answer_paper_chat(
+                    user_q,
+                    selected_docs,
+                    focus,
+                    bool(st.session_state.get("llm_enabled", True)),
+                )
+                meta = "LLM used" if llm_used_chat else (fallback or "deterministic fallback")
+                st.markdown(answer)
+                st.caption(meta)
+            messages.append({"role": "assistant", "content": answer, "meta": meta})
+            st.session_state[chat_key] = messages
+            st.rerun()
+    else:
+        st.info("Select at least one source to enable chat.")
