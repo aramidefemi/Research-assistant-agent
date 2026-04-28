@@ -1,4 +1,8 @@
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except Exception:
+    def load_dotenv() -> bool:
+        return False
 
 load_dotenv()
 
@@ -7,7 +11,12 @@ from html import escape
 from typing import Any
 from collections.abc import Iterator
 from utils.pdf_reader import extract_text_from_pdf
-from utils.trace_store import persist_pipeline_run, log_app_error, log_usage_event
+from utils.trace_store import persist_pipeline_run, log_app_error
+try:
+    from utils.trace_store import log_usage_event
+except Exception:
+    def log_usage_event(event_type: str, payload: dict[str, Any] | None = None) -> None:
+        return None
 from utils.trace_flowchart import build_trace_flowchart_dot
 from utils.gemini_llm import invoke_gemini_prompt, invoke_gemini_prompt_stream
 from paper_graph.pipeline import pipeline, discovery_pipeline
