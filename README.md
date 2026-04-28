@@ -4,6 +4,8 @@ An AI assistant built with **LangGraph** and **Streamlit**. It supports:
 - **PDF evaluation flow**: evaluate academic PDFs against your research focus using a three-step graph (extract → summarise → evaluate).
 - **Topic discovery flow**: take only a topic, search journal papers, and loop search + evaluation until it qualifies up to 2 strong works.
 
+**Online app:** https://nu-research-agent.streamlit.app/
+
 ### Agent architecture (preview)
 
 PDF text is validated, then **summarise** and **evaluate** call Gemini in sequence; state and per-node traces live on `PaperState`. Full detail: **[docs/agent-architecture.md](docs/agent-architecture.md)**.
@@ -121,3 +123,11 @@ streamlit run app.py
    ```
 
 4. Deploy.
+
+## Roadmap
+
+See **[ROADMAP.md](ROADMAP.md)** for prioritized feature updates and nice-to-haves.
+
+## Request a feature
+
+Have an idea? Open a GitHub Issue or PR using the template in **[ROADMAP.md](ROADMAP.md#feature-request-template-for-github-issue-or-pr)** so requests are easy to evaluate and implement.
