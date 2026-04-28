@@ -134,6 +134,15 @@ def _render_risk_flags(flags: list[dict[str, str]]) -> None:
         st.caption(evidence)
 
 
+def _render_citation_use_examples(examples: list[str]) -> None:
+    cleaned = [str(x).strip() for x in examples if str(x).strip()]
+    if not cleaned:
+        st.caption("No citation-use examples generated.")
+        return
+    for idx, example in enumerate(cleaned, start=1):
+        st.markdown(f"{idx}. {example}")
+
+
 SOURCE_MATRIX_FIELDS = [
     ("authors", "Author/s"),
     ("date_of_research", "Date of research"),
@@ -1074,6 +1083,7 @@ if st.session_state.results:
                     metadata=[
                         ("Summary", "Ready" if result.get("summary") else "Missing"),
                         ("Matrix", "Ready" if result.get("source_profile") else "Missing"),
+                            ("Use examples", "Ready" if result.get("citation_use_examples") else "Missing"),
                     ],
                     tone=score_tone,
                 ),
@@ -1105,6 +1115,9 @@ if st.session_state.results:
 
             with tab5:
                 _render_risk_flags(list(result.get("risk_flags") or []))
+
+            with tab6:
+                _render_citation_use_examples(list(result.get("citation_use_examples") or []))
 
             with tab6:
                 trace = result.get("trace") or []
@@ -1187,13 +1200,14 @@ if st.session_state.discovery_results:
                     unsafe_allow_html=True,
                 )
 
-                tab_overview, tab_matrix, tab_risk, tab_abstract, tab_links = st.tabs(
+                tab_overview, tab_matrix, tab_risk, tab_abstract, tab_links, tab_use = st.tabs(
                     [
                         ":material/push_pin: Overview",
                         ":material/table_chart: Evidence Matrix",
                         ":material/report: Risk flags",
                         ":material/article: Abstract",
                         ":material/link: Sources",
+                        ":material/lightbulb: Citation-use examples",
                     ]
                 )
                 with tab_overview:
@@ -1215,6 +1229,8 @@ if st.session_state.discovery_results:
                         st.markdown(f"OpenAlex: {item.get('url')}")
                     if not item.get("doi") and not item.get("url"):
                         st.caption("No external links available for this work.")
+                with tab_use:
+                    _render_citation_use_examples(list(item.get("citation_use_examples") or []))
                 st.markdown("---")
             st.markdown("#### :material/account_tree: Agent trace")
             trace = run.get("trace") or []

@@ -500,8 +500,20 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
             source_profile=source_profile,
             methodology_text=str(state.get("methodology") or ""),
         )
+        citation_use_examples = _build_pdf_citation_use_examples(
+            {
+                **state,
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+            }
+        )
         s2: PaperState = _with_fallback_meta(
-            {**state, "source_profile": source_profile, "risk_flags": risk_flags},
+            {
+                **state,
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+                "citation_use_examples": citation_use_examples,
+            },
             "llm_disabled: matrix fallback used",
         )
         return append_trace(
@@ -513,6 +525,7 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
             result={
                 "source_profile": source_profile,
                 "risk_flags": risk_flags,
+                "citation_use_examples": citation_use_examples,
                 "llm_used": False,
                 "fallback_reason": s2.get("fallback_reason", ""),
             },
@@ -537,8 +550,20 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
             source_profile=source_profile,
             methodology_text=str(state.get("methodology") or ""),
         )
+        citation_use_examples = _build_pdf_citation_use_examples(
+            {
+                **state,
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+            }
+        )
         s2: PaperState = _with_llm_used(
-            {**state, "source_profile": source_profile, "risk_flags": risk_flags}
+            {
+                **state,
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+                "citation_use_examples": citation_use_examples,
+            }
         )
         return append_trace(
             s2,
@@ -548,6 +573,7 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
             result={
                 "source_profile": source_profile,
                 "risk_flags": risk_flags,
+                "citation_use_examples": citation_use_examples,
                 "llm_used": True,
                 "fallback_reason": s2.get("fallback_reason", ""),
             },
@@ -564,8 +590,20 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
             source_profile=source_profile,
             methodology_text=str(state.get("methodology") or ""),
         )
+        citation_use_examples = _build_pdf_citation_use_examples(
+            {
+                **state,
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+            }
+        )
         return append_trace(
-            {**err_state, "source_profile": source_profile, "risk_flags": risk_flags},
+            {
+                **err_state,
+                "source_profile": source_profile,
+                "risk_flags": risk_flags,
+                "citation_use_examples": citation_use_examples,
+            },
             "evaluate_matrix",
             "Matrix LLM failed; deterministic source profile fallback used.",
             detail=str(e),
@@ -573,6 +611,7 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
             result={
                 "source_profile": source_profile,
                 "risk_flags": risk_flags,
+                "citation_use_examples": citation_use_examples,
                 "llm_used": bool(err_state.get("llm_used", False)),
                 "fallback_reason": err_state.get("fallback_reason", ""),
             },
@@ -1055,6 +1094,50 @@ def _extract_methodology_risk_flags(
     return flags
 
 
+def _build_citation_use_examples(
+    *,
+    title: str,
+    summary: str,
+    key_findings: str,
+    methodology: str,
+    source_profile: dict[str, str],
+    risk_flags: list[dict[str, str]],
+) -> list[str]:
+    method = (
+        (source_profile.get("methods_tools_used") or "").strip()
+        or methodology.strip()
+        or "the paper's described approach"
+    )
+    results = (
+        (source_profile.get("results") or "").strip()
+        or key_findings.strip()
+        or summary.strip()
+        or "reported outcomes"
+    )
+    limitation = (
+        (source_profile.get("limitation_of_research_outcomes") or "").strip()
+        or (risk_flags[0].get("evidence", "").strip() if risk_flags else "")
+        or "the paper does not provide a clear limitation statement"
+    )
+    paper_name = title.strip() or "this paper"
+    return [
+        f"Method reuse: adapt {method[:220]} from {paper_name} as a baseline implementation in your workflow.",
+        f"Benchmarking: compare your metrics directly against {results[:240]} from {paper_name}, matching setup as closely as possible.",
+        f"Research-gap extension: design a follow-up experiment addressing this limitation from {paper_name}: {limitation[:240]}.",
+    ]
+
+
+def _build_pdf_citation_use_examples(state: PaperState) -> list[str]:
+    return _build_citation_use_examples(
+        title=str(state.get("filename") or ""),
+        summary=str(state.get("summary") or ""),
+        key_findings=str(state.get("key_findings") or ""),
+        methodology=str(state.get("methodology") or ""),
+        source_profile=dict(state.get("source_profile") or {}),
+        risk_flags=list(state.get("risk_flags") or []),
+    )
+
+
 def discovery_source_profile_node(state: PaperState) -> PaperState:
     """Structured evidence matrix: rule-based when confidence is high, else LLM."""
     if state.get("error"):
@@ -1202,6 +1285,14 @@ def discovery_finalize_candidate_node(state: PaperState) -> PaperState:
         source_profile=source_profile,
         methodology_text=str(source_profile.get("methods_tools_used") or ""),
     )
+    citation_use_examples = _build_citation_use_examples(
+        title=str(candidate.get("title") or ""),
+        summary=str(candidate.get("abstract") or ""),
+        key_findings=reason,
+        methodology=str(source_profile.get("methods_tools_used") or ""),
+        source_profile=source_profile,
+        risk_flags=risk_flags,
+    )
     row = {
         **candidate,
         "score": score,
@@ -1210,6 +1301,7 @@ def discovery_finalize_candidate_node(state: PaperState) -> PaperState:
         "reason": reason,
         "source_profile": source_profile,
         "risk_flags": risk_flags,
+        "citation_use_examples": citation_use_examples,
         "eval_duration_ms": state.get("candidate_eval_duration_ms"),
     }
     evaluated.append(row)
@@ -1237,6 +1329,7 @@ def discovery_finalize_candidate_node(state: PaperState) -> PaperState:
             "qualified_count": len(selected),
             "evaluated_count": len(evaluated),
             "target": state.get("target_qualified_count", 2),
+            "citation_use_examples": citation_use_examples,
         },
     )
 

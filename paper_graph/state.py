@@ -10,6 +10,7 @@ class PaperState(TypedDict):
     relevance_reason: str
     source_profile: NotRequired[dict[str, str]]
     risk_flags: NotRequired[list[dict[str, str]]]
+    citation_use_examples: NotRequired[list[str]]
     fit: bool
     error: Optional[str]
     llm_enabled: NotRequired[bool]
@@ -34,4 +35,5 @@ class PaperState(TypedDict):
     candidate_reason: NotRequired[str]
     candidate_source_profile: NotRequired[dict[str, str]]
     candidate_risk_flags: NotRequired[list[dict[str, str]]]
+    candidate_citation_use_examples: NotRequired[list[str]]
     candidate_eval_duration_ms: NotRequired[float | None]
