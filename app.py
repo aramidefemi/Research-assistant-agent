@@ -17,6 +17,7 @@ try:
 except Exception:
     def log_usage_event(event_type: str, payload: dict[str, Any] | None = None) -> None:
         return None
+from utils.nav import render_page_nav
 from utils.trace_flowchart import build_trace_flowchart_dot
 from utils.gemini_llm import invoke_gemini_prompt, invoke_gemini_prompt_stream
 from paper_graph.pipeline import pipeline, discovery_pipeline
@@ -850,8 +851,7 @@ st.markdown(
 )
 
 # quick nav for multipage setup without relying on sidebar
-st.page_link("app.py", label="Research workspace", icon=":material/home:")
-st.page_link("pages/Admin_Usage_Stats.py", label="Admin usage stats", icon=":material/admin_panel_settings:")
+render_page_nav()
 
 # ── Session state init ────────────────────────────────────────────────────────
 if "results" not in st.session_state:

@@ -8,6 +8,7 @@ load_dotenv()
 
 import streamlit as st
 
+from utils.nav import render_page_nav
 from utils.trace_store import fetch_usage_stats, log_usage_event
 
 
@@ -24,8 +25,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-st.page_link("app.py", label="Research workspace", icon=":material/home:")
-st.page_link("pages/Admin_Usage_Stats.py", label="Admin usage stats", icon=":material/admin_panel_settings:")
+render_page_nav()
 if "usage_open_logged_admin" not in st.session_state:
     st.session_state.usage_open_logged_admin = False
 if not st.session_state.usage_open_logged_admin:
