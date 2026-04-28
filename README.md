@@ -124,35 +124,10 @@ streamlit run app.py
 
 4. Deploy.
 
-## Roadmap (researcher value first)
+## Roadmap
 
-### 3 key feature updates
+See **[ROADMAP.md](ROADMAP.md)** for prioritized feature updates and nice-to-haves.
 
-1. **Evidence-grounded outputs with inline citations**
-   - Add sentence-level references to source PDF pages/chunks and search result metadata.
-   - Value: researchers can verify claims quickly, trust scores less blindly, and reuse outputs in notes/literature reviews.
+## Request a feature
 
-2. **Living literature tracker (alerts + re-evaluation)**
-   - Save topics as watches, re-run discovery on a schedule, and notify when new high-fit papers appear.
-   - Value: turns the app from one-time analysis into a continuous research assistant for fast-moving fields.
-
-3. **Research workspace export (BibTeX, Zotero/CSV, structured notes)**
-   - One-click export of qualified papers, rationale, and summaries to researcher tools.
-   - Value: removes manual copy-paste and shortens the path from discovery to writing.
-
-### 5 nice-to-haves
-
-1. **Side-by-side paper comparison**
-   - Compare 2–4 papers on methods, datasets, limitations, and novelty in one view.
-
-2. **Custom scoring profiles**
-   - Let users weight criteria (novelty, rigor, domain fit, recency) per project.
-
-3. **Methodology and risk flags**
-   - Auto-detect common concerns (small sample size, weak baseline choice, missing ablations).
-
-4. **Multi-format ingestion**
-   - Add support for arXiv URLs, DOI links, and reference lists in addition to PDF uploads.
-
-5. **Team collaboration mode**
-   - Shared collections, comments, and reviewer agreement/disagreement tracking.
+Have an idea? Open a GitHub Issue or PR using the template in **[ROADMAP.md](ROADMAP.md#feature-request-template-for-github-issue-or-pr)** so requests are easy to evaluate and implement.
