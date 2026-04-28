@@ -37,23 +37,6 @@ This roadmap prioritizes features that increase researcher trust, speed, and wor
    - Example: for a credit scoring paper, suggest how to adopt the method, compare against its reported outcomes, or extend a stated limitation.
    - Value: answers “how can I use this?” not just “is this relevant?”, turning relevance into actionable research steps.
 
-## 5 nice-to-haves
-
-1. **Side-by-side paper comparison board**
-   - Compare 2-4 papers on methods, datasets, limitations, novelty, and reproducibility in one view.
-
-2. **Custom scoring profiles per project**
-   - Let users weight criteria (novelty, rigor, domain fit, recency) and save presets by research track.
-
-3. **Multi-format ingestion**
-   - Support arXiv URLs, DOI links, and reference lists in addition to PDF uploads.
-
-4. **Continuous discovery watches**
-   - Save topics and re-check periodically for new candidate papers with change alerts.
-
-5. **Team collaboration mode**
-   - Shared collections, comments, and reviewer agreement/disagreement tracking.
-
 ## Feature request template for GitHub Issue or PR
 
 Feature requests are welcome via **GitHub Issues** or **PRs**.
