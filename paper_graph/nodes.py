@@ -33,6 +33,104 @@ DISCOVERY_EVAL_CACHE_VERSION = 1
 DISCOVERY_EVAL_CACHE_MAX = 384
 _DISCOVERY_EVAL_CACHE_FALLBACK: dict[str, dict[str, Any]] = {}
 _DISCOVERY_EVAL_CACHE_FALLBACK_LOCK = threading.Lock()
+_WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9\\-_/]*")
+
+
+def _llm_enabled(state: PaperState) -> bool:
+    return bool(state.get("llm_enabled", True))
+
+
+def _with_llm_used(state: PaperState) -> PaperState:
+    return {
+        **state,
+        "llm_used": True,
+        "fallback_reason": state.get("fallback_reason", ""),
+    }
+
+
+def _with_fallback_meta(state: PaperState, reason: str) -> PaperState:
+    prior = (state.get("fallback_reason") or "").strip()
+    merged = reason if not prior else (prior if reason in prior else f"{prior}; {reason}")
+    return {
+        **state,
+        "llm_used": bool(state.get("llm_used", False)),
+        "fallback_reason": merged,
+    }
+
+
+def _top_keywords(text: str, limit: int = 10) -> list[str]:
+    stop = {
+        "the", "and", "for", "that", "with", "from", "this", "these", "those",
+        "into", "about", "using", "used", "their", "they", "there", "than", "then",
+        "are", "was", "were", "been", "have", "has", "had", "can", "could",
+        "will", "would", "should", "may", "might", "our", "your", "you", "its",
+        "not", "but", "all", "any", "one", "two", "three", "paper", "study", "research",
+        "result", "results", "method", "methods", "model", "models", "analysis", "data",
+    }
+    counts: dict[str, int] = {}
+    for token in _WORD_RE.findall((text or "").lower()):
+        if len(token) < 4 or token in stop:
+            continue
+        counts[token] = counts.get(token, 0) + 1
+    ranked = sorted(counts.items(), key=lambda x: (-x[1], x[0]))
+    return [k for k, _ in ranked[:limit]]
+
+
+def _fallback_summary_sections(pdf_text: str) -> tuple[str, str, str]:
+    text = (pdf_text or "").strip()
+    if not text:
+        return ("No text available.", "No key findings extracted.", "No methodology extracted.")
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    summary = " ".join(lines[:4])[:900] if lines else text[:900]
+    findings = _top_keywords(text, limit=10)
+    methodology_hits = [
+        k for k in findings
+        if any(x in k for x in ("method", "model", "regress", "network", "bayes", "boost", "transformer"))
+    ]
+    key_findings = ", ".join(findings) if findings else "No clear findings extracted."
+    methodology = ", ".join(methodology_hits[:6]) if methodology_hits else "Methodology not explicitly detected."
+    return summary, key_findings, methodology
+
+
+def _deterministic_reason(research_focus: str, score: float, fit: bool) -> str:
+    decision = "matches" if fit else "does not match"
+    return (
+        f"Deterministic fallback {decision} the research focus "
+        f"(score={score:.2f}) based on keyword overlap with: {research_focus[:180]}"
+    )
+
+
+def _deterministic_source_profile_from_text(pdf_text: str, topic_hint: str = "") -> dict[str, str]:
+    excerpt = _build_pdf_excerpt(pdf_text, max_chars=900)
+    return {
+        "authors": "N/A",
+        "date_of_research": "N/A",
+        "country_of_origin": "N/A",
+        "purpose_aims": topic_hint or "N/A",
+        "research_questions": topic_hint or "N/A",
+        "data_used_method_collection_sample_size": "N/A",
+        "methods_tools_used": "N/A",
+        "method_and_data_collection_limitations": "N/A",
+        "results": excerpt or "N/A",
+        "contribution": "Deterministic fallback extraction (no LLM).",
+        "limitation_of_research_outcomes": "N/A",
+        "future_perspectives": "N/A",
+    }
+
+
+def _deterministic_score_fit_for_candidate(topic: str, candidate: dict[str, Any]) -> tuple[float, bool]:
+    terms_topic = set(_top_keywords(topic, limit=14))
+    if not terms_topic:
+        return 0.0, False
+    text = " ".join([
+        str(candidate.get("title") or ""),
+        str(candidate.get("abstract") or ""),
+        str(candidate.get("venue") or ""),
+    ])
+    terms_paper = set(_top_keywords(text, limit=20))
+    overlap = len(terms_topic.intersection(terms_paper))
+    score = min(1.0, overlap / max(1, min(8, len(terms_topic))))
+    return score, score >= 0.5
 
 
 def _discovery_eval_cache_bucket() -> dict[str, dict[str, Any]]:
@@ -197,8 +295,51 @@ def evaluate_score_fit_node(state: PaperState) -> PaperState:
     if state.get("error"):
         return state
 
+    research_focus = st.session_state.get("research_focus", "General ML and AI research")
+    if not _llm_enabled(state):
+        score, fit = _deterministic_score_fit_for_candidate(
+            str(research_focus),
+            {
+                "title": "",
+                "abstract": " ".join(
+                    [
+                        str(state.get("summary") or ""),
+                        str(state.get("key_findings") or ""),
+                        str(state.get("methodology") or ""),
+                    ]
+                ),
+            },
+        )
+        reason = (
+            "Quick evaluation: narrative reasoning skipped."
+            if st.session_state.get("evaluation_depth", "full") == "quick"
+            else ""
+        )
+        ev: PaperState = _with_fallback_meta(
+            {
+                **state,
+                "relevance_score": score,
+                "fit": fit,
+                "relevance_reason": reason,
+            },
+            "llm_disabled: score/fit fallback used",
+        )
+        fit_lbl = "YES" if fit else "NO"
+        return append_trace(
+            ev,
+            "evaluate_score_fit",
+            f"Deterministic relevance scoring fallback: SCORE={score:.2f}, FIT={fit_lbl}.",
+            detail="No-LLM mode enabled.",
+            duration_ms=0.0,
+            result={
+                "score": score,
+                "fit": fit,
+                "mode": "quick" if st.session_state.get("evaluation_depth", "full") == "quick" else "full",
+                "llm_used": False,
+                "fallback_reason": ev.get("fallback_reason", ""),
+            },
+        )
     try:
-        research_focus = st.session_state.get("research_focus", "General ML and AI research")
         prompt = EVALUATE_SCORE_FIT_PROMPT.format(
             research_focus=research_focus,
             summary=state["summary"],
@@ -215,12 +356,12 @@ def evaluate_score_fit_node(state: PaperState) -> PaperState:
             if quick
             else ""
         )
-        ev: PaperState = {
+        ev: PaperState = _with_llm_used({
             **state,
             "relevance_score": score,
             "fit": fit,
             "relevance_reason": reason,
-        }
+        })
         fit_lbl = "YES" if fit else "NO"
         detail = f"model call {elapsed_ms:.0f} ms."
         if quick:
@@ -235,14 +376,45 @@ def evaluate_score_fit_node(state: PaperState) -> PaperState:
                 "score": score,
                 "fit": fit,
                 "mode": "quick" if quick else "full",
+                "llm_used": True,
+                "fallback_reason": ev.get("fallback_reason", ""),
             },
         )
     except Exception as e:
+        score, fit = _deterministic_score_fit_for_candidate(
+            str(research_focus),
+            {
+                "title": "",
+                "abstract": " ".join(
+                    [
+                        str(state.get("summary") or ""),
+                        str(state.get("key_findings") or ""),
+                        str(state.get("methodology") or ""),
+                    ]
+                ),
+            },
+        )
+        ev = _with_fallback_meta(
+            {
+                **state,
+                "relevance_score": score,
+                "fit": fit,
+            },
+            f"llm_error: {str(e)}",
+        )
         return append_trace(
-            {**state, "error": f"Evaluation failed: {str(e)}"},
+            ev,
             "evaluate_score_fit",
-            "Score/fit evaluation failed.",
-            detail=str(e),
+            "Score/fit LLM failed; deterministic scoring fallback used.",
+            detail=str(e)[:220],
+            duration_ms=0.0,
+            result={
+                "score": score,
+                "fit": fit,
+                "mode": "quick" if st.session_state.get("evaluation_depth", "full") == "quick" else "full",
+                "llm_used": bool(ev.get("llm_used", False)),
+                "fallback_reason": ev.get("fallback_reason", ""),
+            },
         )
 
 
@@ -810,6 +982,197 @@ def _rule_based_discovery_source_profile(
     }
 
 
+def _extract_methodology_risk_flags(
+    text: str,
+    *,
+    context_label: str,
+) -> list[dict[str, str]]:
+    low = (text or "").lower()
+    if not low:
+        return []
+    rules: list[tuple[str, str, str]] = [
+        ("small_sample_size", "Small sample size", "small sample"),
+        ("weak_baseline", "Weak or missing baseline", "baseline"),
+        ("missing_ablations", "Missing or limited ablations", "ablation"),
+        ("unclear_evaluation", "Unclear evaluation setup", "evaluation"),
+    ]
+    flags: list[dict[str, str]] = []
+    for code, label, needle in rules:
+        idx = low.find(needle)
+        if idx == -1:
+            continue
+        start = max(0, idx - 80)
+        end = min(len(text), idx + len(needle) + 120)
+        snippet = (text[start:end] or "").strip().replace("\n", " ")
+        if len(snippet) > 260:
+            snippet = snippet[:257] + "..."
+        flags.append(
+            {
+                "code": code,
+                "label": label,
+                "evidence": snippet or f"Matched keyword: {needle}",
+                "source": context_label,
+            }
+        )
+    return flags
+
+
+def _build_citation_use_examples(
+    *,
+    title: str,
+    summary: str,
+    key_findings: str,
+    methodology: str,
+    source_profile: dict[str, str],
+    risk_flags: list[dict[str, str]],
+) -> list[str]:
+    method = (
+        (source_profile.get("methods_tools_used") or "").strip()
+        or methodology.strip()
+        or "the paper's described approach"
+    )
+    results = (
+        (source_profile.get("results") or "").strip()
+        or key_findings.strip()
+        or summary.strip()
+        or "reported outcomes"
+    )
+    limitation = (
+        (source_profile.get("limitation_of_research_outcomes") or "").strip()
+        or (risk_flags[0].get("evidence", "").strip() if risk_flags else "")
+        or "the paper does not provide a clear limitation statement"
+    )
+    paper_name = title.strip() or "this paper"
+    return [
+        f"Method reuse: adapt {method[:220]} from {paper_name} as a baseline implementation in your workflow.",
+        f"Benchmarking: compare your metrics directly against {results[:240]} from {paper_name}, matching setup as closely as possible.",
+        f"Research-gap extension: design a follow-up experiment addressing this limitation from {paper_name}: {limitation[:240]}.",
+    ]
+
+
+def _build_pdf_citation_use_examples(state: PaperState) -> list[str]:
+    return _build_citation_use_examples(
+        title=str(state.get("filename") or ""),
+        summary=str(state.get("summary") or ""),
+        key_findings=str(state.get("key_findings") or ""),
+        methodology=str(state.get("methodology") or ""),
+        source_profile=dict(state.get("source_profile") or {}),
+        risk_flags=list(state.get("risk_flags") or []),
+    )
+
+
+def _confidence_label_from_signals(score: float, risk_count: int) -> str:
+    if score >= 0.75 and risk_count <= 1:
+        return "high"
+    if score >= 0.45 and risk_count <= 3:
+        return "medium"
+    return "low"
+
+
+def _build_claim_evidence_map_for_pdf(
+    *,
+    score: float,
+    fit: bool,
+    reason: str,
+    summary: str,
+    key_findings: str,
+    methodology: str,
+) -> list[dict[str, str]]:
+    score_claim = f"Paper fit={ 'YES' if fit else 'NO' } with relevance score={score:.2f}."
+    return [
+        {
+            "claim": score_claim,
+            "evidence": (reason or "No explicit reason returned.")[:260],
+            "source": "evaluation_reason",
+        },
+        {
+            "claim": "Summary captures main contribution.",
+            "evidence": (summary or "N/A")[:260],
+            "source": "summary",
+        },
+        {
+            "claim": "Key findings were extracted from the paper.",
+            "evidence": (key_findings or "N/A")[:260],
+            "source": "key_findings",
+        },
+        {
+            "claim": "Methodological detail supports interpretation.",
+            "evidence": (methodology or "N/A")[:260],
+            "source": "methodology",
+        },
+    ]
+
+
+def _build_claim_evidence_map_for_discovery(
+    *,
+    score: float,
+    fit: bool,
+    quality: bool,
+    reason: str,
+    abstract: str,
+    source_profile: dict[str, str],
+) -> list[dict[str, str]]:
+    return [
+        {
+            "claim": f"Candidate fit={ 'YES' if fit else 'NO' } quality={ 'YES' if quality else 'NO' } score={score:.2f}.",
+            "evidence": (reason or "No explicit reason returned.")[:260],
+            "source": "candidate_reason",
+        },
+        {
+            "claim": "Abstract supports topical relevance assessment.",
+            "evidence": (abstract or "N/A")[:260],
+            "source": "abstract",
+        },
+        {
+            "claim": "Reported results support qualification decision.",
+            "evidence": str((source_profile.get("results") or "N/A"))[:260],
+            "source": "source_profile.results",
+        },
+    ]
+
+
+def _build_pdf_evidence_contract(state: PaperState, risk_flags: list[dict[str, str]]) -> dict[str, Any]:
+    score = float(state.get("relevance_score") or 0.0)
+    claims = _build_claim_evidence_map_for_pdf(
+        score=score,
+        fit=bool(state.get("fit")),
+        reason=str(state.get("relevance_reason") or ""),
+        summary=str(state.get("summary") or ""),
+        key_findings=str(state.get("key_findings") or ""),
+        methodology=str(state.get("methodology") or ""),
+    )
+    return {
+        "confidence_label": _confidence_label_from_signals(score, len(risk_flags)),
+        "insufficient_evidence": not bool(claims),
+        "claim_evidence": claims,
+    }
+
+
+def _build_discovery_evidence_contract(
+    *,
+    score: float,
+    fit: bool,
+    quality: bool,
+    reason: str,
+    abstract: str,
+    source_profile: dict[str, str],
+    risk_flags: list[dict[str, str]],
+) -> dict[str, Any]:
+    claims = _build_claim_evidence_map_for_discovery(
+        score=score,
+        fit=fit,
+        quality=quality,
+        reason=reason,
+        abstract=abstract,
+        source_profile=source_profile,
+    )
+    return {
+        "confidence_label": _confidence_label_from_signals(score, len(risk_flags)),
+        "insufficient_evidence": not bool(claims),
+        "claim_evidence": claims,
+    }
+
+
 def discovery_source_profile_node(state: PaperState) -> PaperState:
     """Structured evidence matrix: rule-based when confidence is high, else LLM."""
     if state.get("error"):
@@ -951,6 +1314,29 @@ def discovery_finalize_candidate_node(state: PaperState) -> PaperState:
     quality = bool(state.get("candidate_quality"))
     reason = str(state.get("candidate_reason") or "")
     source_profile = dict(state.get("candidate_source_profile") or {})
+    risk_flags = _extract_methodology_risk_flags(
+        title=str(candidate.get("title") or ""),
+        abstract=str(candidate.get("abstract") or ""),
+        source_profile=source_profile,
+        methodology_text=str(source_profile.get("methods_tools_used") or ""),
+    )
+    citation_use_examples = _build_citation_use_examples(
+        title=str(candidate.get("title") or ""),
+        summary=str(candidate.get("abstract") or ""),
+        key_findings=reason,
+        methodology=str(source_profile.get("methods_tools_used") or ""),
+        source_profile=source_profile,
+        risk_flags=risk_flags,
+    )
+    evidence_contract = _build_discovery_evidence_contract(
+        score=score,
+        fit=fit,
+        quality=quality,
+        reason=reason,
+        abstract=str(candidate.get("abstract") or ""),
+        source_profile=source_profile,
+        risk_flags=risk_flags,
+    )
     row = {
         **candidate,
         "score": score,
@@ -958,6 +1344,9 @@ def discovery_finalize_candidate_node(state: PaperState) -> PaperState:
         "quality": quality,
         "reason": reason,
         "source_profile": source_profile,
+        "risk_flags": risk_flags,
+        "citation_use_examples": citation_use_examples,
+        "evidence_contract": evidence_contract,
         "eval_duration_ms": state.get("candidate_eval_duration_ms"),
     }
     evaluated.append(row)
@@ -985,6 +1374,8 @@ def discovery_finalize_candidate_node(state: PaperState) -> PaperState:
             "qualified_count": len(selected),
             "evaluated_count": len(evaluated),
             "target": state.get("target_qualified_count", 2),
+            "citation_use_examples": citation_use_examples,
+            "evidence_contract": evidence_contract,
         },
     )
 

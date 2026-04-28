@@ -123,6 +123,46 @@ def _build_summary_card_html(
     )
 
 
+def _render_risk_flags(flags: list[dict[str, str]]) -> None:
+    if not flags:
+        st.caption("No explicit risk flags found.")
+        return
+    for i, flag in enumerate(flags, start=1):
+        label = str(flag.get("label") or "Risk flag")
+        evidence = str(flag.get("evidence") or "No evidence snippet available.")
+        st.markdown(f"**{i}. {label}**")
+        st.caption(evidence)
+
+
+def _render_citation_use_examples(examples: list[str]) -> None:
+    cleaned = [str(x).strip() for x in examples if str(x).strip()]
+    if not cleaned:
+        st.caption("No citation-use examples generated.")
+        return
+    for idx, example in enumerate(cleaned, start=1):
+        st.markdown(f"{idx}. {example}")
+
+
+def _render_evidence_contract(contract: dict[str, Any]) -> None:
+    if not contract:
+        st.caption("No evidence contract available.")
+        return
+    confidence = str(contract.get("confidence_label") or "low")
+    insufficient = bool(contract.get("insufficient_evidence"))
+    st.markdown(f"**Confidence:** `{confidence}`")
+    st.markdown(f"**Insufficient evidence:** `{'yes' if insufficient else 'no'}`")
+    claims = list(contract.get("claim_evidence") or [])
+    if not claims:
+        st.caption("No claim-to-evidence mappings found.")
+        return
+    for i, row in enumerate(claims, start=1):
+        claim = str(row.get("claim") or "Claim")
+        evidence = str(row.get("evidence") or "No evidence snippet.")
+        source = str(row.get("source") or "unknown")
+        st.markdown(f"**{i}. {claim}**")
+        st.caption(f"{evidence} [{source}]")
+
+
 SOURCE_MATRIX_FIELDS = [
     ("authors", "Author/s"),
     ("date_of_research", "Date of research"),
@@ -1063,18 +1103,22 @@ if st.session_state.results:
                     metadata=[
                         ("Summary", "Ready" if result.get("summary") else "Missing"),
                         ("Matrix", "Ready" if result.get("source_profile") else "Missing"),
+                            ("Use examples", "Ready" if result.get("citation_use_examples") else "Missing"),
                     ],
                     tone=score_tone,
                 ),
                 unsafe_allow_html=True,
             )
 
-            tab1, tab2, tab3, tab4, tab5 = st.tabs(
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
                 [
                     ":material/notes: Summary",
                     ":material/vpn_key: Key Findings",
                     ":material/build: Methodology",
                     ":material/table_chart: Evidence Matrix",
+                    ":material/report: Risk flags",
+                    ":material/lightbulb: Citation-use examples",
+                    ":material/fact_check: Evidence contract",
                     ":material/account_tree: Agent trace",
                 ]
             )
@@ -1092,6 +1136,15 @@ if st.session_state.results:
                 _render_source_matrix(dict(result.get("source_profile") or {}))
 
             with tab5:
+                _render_risk_flags(list(result.get("risk_flags") or []))
+
+            with tab6:
+                _render_citation_use_examples(list(result.get("citation_use_examples") or []))
+
+            with tab7:
+                _render_evidence_contract(dict(result.get("evidence_contract") or {}))
+
+            with tab8:
                 trace = result.get("trace") or []
                 oid = result.get("trace_id")
                 if oid:
@@ -1172,12 +1225,15 @@ if st.session_state.discovery_results:
                     unsafe_allow_html=True,
                 )
 
-                tab_overview, tab_matrix, tab_abstract, tab_links = st.tabs(
+                tab_overview, tab_matrix, tab_risk, tab_abstract, tab_links, tab_use, tab_contract = st.tabs(
                     [
                         ":material/push_pin: Overview",
                         ":material/table_chart: Evidence Matrix",
+                        ":material/report: Risk flags",
                         ":material/article: Abstract",
                         ":material/link: Sources",
+                        ":material/lightbulb: Citation-use examples",
+                        ":material/fact_check: Evidence contract",
                     ]
                 )
                 with tab_overview:
@@ -1188,6 +1244,8 @@ if st.session_state.discovery_results:
                     st.markdown(f"**Scholarly quality:** {'YES' if quality else 'NO'}")
                 with tab_matrix:
                     _render_source_matrix(dict(item.get("source_profile") or {}))
+                with tab_risk:
+                    _render_risk_flags(list(item.get("risk_flags") or []))
                 with tab_abstract:
                     st.markdown(item.get("abstract") or "Abstract not available.")
                 with tab_links:
@@ -1197,6 +1255,10 @@ if st.session_state.discovery_results:
                         st.markdown(f"OpenAlex: {item.get('url')}")
                     if not item.get("doi") and not item.get("url"):
                         st.caption("No external links available for this work.")
+                with tab_use:
+                    _render_citation_use_examples(list(item.get("citation_use_examples") or []))
+                with tab_contract:
+                    _render_evidence_contract(dict(item.get("evidence_contract") or {}))
                 st.markdown("---")
             st.markdown("#### :material/account_tree: Agent trace")
             trace = run.get("trace") or []

@@ -24,6 +24,8 @@ Topic → discovery_init → discovery_search → discovery_evaluate ↺ until 2
 3. Topic discovery loops over external journal search and your evaluator until at least 2 qualified papers are found or max rounds are reached.
 4. Results show score, fit, reasons, and an **Agent trace** with per-node contributions.
 5. Use **Interactive paper chat** to ask follow-up questions grounded in selected scored/discovered papers, with citation anchors.
+6. Review **Citation-use examples** for each paper to see concrete method reuse, benchmarking, and limitation-driven extension ideas.
+6. Review **Methodology & risk flags** on each paper to quickly spot sample-size, baseline, ablation, and evaluation-clarity concerns with evidence snippets.
 
 ## Orchestration and tracing
 
@@ -101,6 +103,10 @@ If `LLM_PROVIDER` is unset, runtime keeps legacy auto mode: OpenRouter-first (if
   - `llm_used: true/false`
   - `fallback_reason: <string>`
   and these values are also surfaced in trace step results.
+- Evidence-first contract is now attached to outputs:
+  - `confidence_label` (`high` / `medium` / `low`)
+  - `insufficient_evidence` (`true/false`)
+  - `claim_evidence` mappings (claim → evidence snippet + source field)
 
 Run:
 
