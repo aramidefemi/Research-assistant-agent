@@ -2,7 +2,7 @@
 
 This roadmap prioritizes features that increase researcher trust, speed, and workflow integration.
 
-## 6 key feature updates
+## 5 key feature updates
 
 1. **Fault-tolerant no-LLM mode (with explicit opt-out)**
    - Add a deterministic fallback pipeline (regex/rules-based extraction + scoring heuristics) when LLMs are unavailable.
@@ -16,26 +16,21 @@ This roadmap prioritizes features that increase researcher trust, speed, and wor
    - Keep chat state tied to selected paper(s) and current research focus.
    - Value: moves the app from static scoring to interactive analysis and faster researcher decision-making.
 
-3. **Evidence-first output contract**
-   - Enforce that every key claim (summary/evaluation/chat response) maps to source evidence.
-   - Require confidence labels and “insufficient evidence” states instead of overconfident output.
-   - Value: increases trust and reduces hallucination risk in research workflows.
-
-4. **Research workspace export + reproducibility bundles**
-   - Export qualified papers and evaluations to BibTeX/Zotero CSV/structured notes.
-   - Include run config (mode, prompts/rules, timestamps, model or fallback path) for reproducibility.
-   - Value: shortens path from discovery to writing while preserving auditability.
-
-5. **Methodology and risk flags**
+3. **Methodology and risk flags**
    - Auto-highlight concerns such as small sample size, weak baselines, missing ablations, or unclear evaluation setup.
    - Tag each flag with short evidence snippets so users can inspect the source quickly.
    - Value: helps researchers avoid weak evidence and improves paper selection quality.
 
-6. **Citation-use examples (practical research application guidance)**
+4. **Citation-use examples (practical research application guidance)**
    - For each relevant paper, generate at least 3 concrete ways the user can use it in their work.
    - Cover distinct angles: method reuse, result benchmarking, and limitation-based research gaps.
    - Example: for a credit scoring paper, suggest how to adopt the method, compare against its reported outcomes, or extend a stated limitation.
    - Value: answers “how can I use this?” not just “is this relevant?”, turning relevance into actionable research steps.
+
+5. **Evidence-first output contract**
+   - Enforce that every key claim (summary/evaluation/chat response) maps to source evidence.
+   - Require confidence labels and “insufficient evidence” states instead of overconfident output.
+   - Value: increases trust and reduces hallucination risk in research workflows.
 
 ## Feature request template for GitHub Issue or PR
 
