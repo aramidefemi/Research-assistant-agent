@@ -513,6 +513,13 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
                 "source_profile": source_profile,
                 "risk_flags": risk_flags,
                 "citation_use_examples": citation_use_examples,
+                "evidence_contract": _build_pdf_evidence_contract(
+                    {
+                        **state,
+                        "risk_flags": risk_flags,
+                    },
+                    risk_flags,
+                ),
             },
             "llm_disabled: matrix fallback used",
         )
@@ -563,6 +570,13 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
                 "source_profile": source_profile,
                 "risk_flags": risk_flags,
                 "citation_use_examples": citation_use_examples,
+                "evidence_contract": _build_pdf_evidence_contract(
+                    {
+                        **state,
+                        "risk_flags": risk_flags,
+                    },
+                    risk_flags,
+                ),
             }
         )
         return append_trace(
@@ -603,6 +617,13 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
                 "source_profile": source_profile,
                 "risk_flags": risk_flags,
                 "citation_use_examples": citation_use_examples,
+                "evidence_contract": _build_pdf_evidence_contract(
+                    {
+                        **state,
+                        "risk_flags": risk_flags,
+                    },
+                    risk_flags,
+                ),
             },
             "evaluate_matrix",
             "Matrix LLM failed; deterministic source profile fallback used.",
@@ -1138,6 +1159,118 @@ def _build_pdf_citation_use_examples(state: PaperState) -> list[str]:
     )
 
 
+def _confidence_label_from_signals(score: float, risk_count: int) -> str:
+    if score >= 0.75 and risk_count <= 1:
+        return "high"
+    if score >= 0.45 and risk_count <= 3:
+        return "medium"
+    return "low"
+
+
+def _build_claim_evidence_map_for_pdf(
+    *,
+    score: float,
+    fit: bool,
+    reason: str,
+    summary: str,
+    key_findings: str,
+    methodology: str,
+) -> list[dict[str, str]]:
+    score_claim = f"Paper fit={ 'YES' if fit else 'NO' } with relevance score={score:.2f}."
+    return [
+        {
+            "claim": score_claim,
+            "evidence": (reason or "No explicit reason returned.")[:260],
+            "source": "evaluation_reason",
+        },
+        {
+            "claim": "Summary captures main contribution.",
+            "evidence": (summary or "N/A")[:260],
+            "source": "summary",
+        },
+        {
+            "claim": "Key findings were extracted from the paper.",
+            "evidence": (key_findings or "N/A")[:260],
+            "source": "key_findings",
+        },
+        {
+            "claim": "Methodological detail supports interpretation.",
+            "evidence": (methodology or "N/A")[:260],
+            "source": "methodology",
+        },
+    ]
+
+
+def _build_claim_evidence_map_for_discovery(
+    *,
+    score: float,
+    fit: bool,
+    quality: bool,
+    reason: str,
+    abstract: str,
+    source_profile: dict[str, str],
+) -> list[dict[str, str]]:
+    return [
+        {
+            "claim": f"Candidate fit={ 'YES' if fit else 'NO' } quality={ 'YES' if quality else 'NO' } score={score:.2f}.",
+            "evidence": (reason or "No explicit reason returned.")[:260],
+            "source": "candidate_reason",
+        },
+        {
+            "claim": "Abstract supports topical relevance assessment.",
+            "evidence": (abstract or "N/A")[:260],
+            "source": "abstract",
+        },
+        {
+            "claim": "Reported results support qualification decision.",
+            "evidence": str((source_profile.get("results") or "N/A"))[:260],
+            "source": "source_profile.results",
+        },
+    ]
+
+
+def _build_pdf_evidence_contract(state: PaperState, risk_flags: list[dict[str, str]]) -> dict[str, Any]:
+    score = float(state.get("relevance_score") or 0.0)
+    claims = _build_claim_evidence_map_for_pdf(
+        score=score,
+        fit=bool(state.get("fit")),
+        reason=str(state.get("relevance_reason") or ""),
+        summary=str(state.get("summary") or ""),
+        key_findings=str(state.get("key_findings") or ""),
+        methodology=str(state.get("methodology") or ""),
+    )
+    return {
+        "confidence_label": _confidence_label_from_signals(score, len(risk_flags)),
+        "insufficient_evidence": not bool(claims),
+        "claim_evidence": claims,
+    }
+
+
+def _build_discovery_evidence_contract(
+    *,
+    score: float,
+    fit: bool,
+    quality: bool,
+    reason: str,
+    abstract: str,
+    source_profile: dict[str, str],
+    risk_flags: list[dict[str, str]],
+) -> dict[str, Any]:
+    claims = _build_claim_evidence_map_for_discovery(
+        score=score,
+        fit=fit,
+        quality=quality,
+        reason=reason,
+        abstract=abstract,
+        source_profile=source_profile,
+    )
+    return {
+        "confidence_label": _confidence_label_from_signals(score, len(risk_flags)),
+        "insufficient_evidence": not bool(claims),
+        "claim_evidence": claims,
+    }
+
+
 def discovery_source_profile_node(state: PaperState) -> PaperState:
     """Structured evidence matrix: rule-based when confidence is high, else LLM."""
     if state.get("error"):
@@ -1293,6 +1426,15 @@ def discovery_finalize_candidate_node(state: PaperState) -> PaperState:
         source_profile=source_profile,
         risk_flags=risk_flags,
     )
+    evidence_contract = _build_discovery_evidence_contract(
+        score=score,
+        fit=fit,
+        quality=quality,
+        reason=reason,
+        abstract=str(candidate.get("abstract") or ""),
+        source_profile=source_profile,
+        risk_flags=risk_flags,
+    )
     row = {
         **candidate,
         "score": score,
@@ -1302,6 +1444,7 @@ def discovery_finalize_candidate_node(state: PaperState) -> PaperState:
         "source_profile": source_profile,
         "risk_flags": risk_flags,
         "citation_use_examples": citation_use_examples,
+        "evidence_contract": evidence_contract,
         "eval_duration_ms": state.get("candidate_eval_duration_ms"),
     }
     evaluated.append(row)
@@ -1330,6 +1473,7 @@ def discovery_finalize_candidate_node(state: PaperState) -> PaperState:
             "evaluated_count": len(evaluated),
             "target": state.get("target_qualified_count", 2),
             "citation_use_examples": citation_use_examples,
+            "evidence_contract": evidence_contract,
         },
     )
 

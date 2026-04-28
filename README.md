@@ -103,6 +103,10 @@ If `LLM_PROVIDER` is unset, runtime keeps legacy auto mode: OpenRouter-first (if
   - `llm_used: true/false`
   - `fallback_reason: <string>`
   and these values are also surfaced in trace step results.
+- Evidence-first contract is now attached to outputs:
+  - `confidence_label` (`high` / `medium` / `low`)
+  - `insufficient_evidence` (`true/false`)
+  - `claim_evidence` mappings (claim → evidence snippet + source field)
 
 Run:
 

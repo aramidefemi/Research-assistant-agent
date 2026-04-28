@@ -143,6 +143,26 @@ def _render_citation_use_examples(examples: list[str]) -> None:
         st.markdown(f"{idx}. {example}")
 
 
+def _render_evidence_contract(contract: dict[str, Any]) -> None:
+    if not contract:
+        st.caption("No evidence contract available.")
+        return
+    confidence = str(contract.get("confidence_label") or "low")
+    insufficient = bool(contract.get("insufficient_evidence"))
+    st.markdown(f"**Confidence:** `{confidence}`")
+    st.markdown(f"**Insufficient evidence:** `{'yes' if insufficient else 'no'}`")
+    claims = list(contract.get("claim_evidence") or [])
+    if not claims:
+        st.caption("No claim-to-evidence mappings found.")
+        return
+    for i, row in enumerate(claims, start=1):
+        claim = str(row.get("claim") or "Claim")
+        evidence = str(row.get("evidence") or "No evidence snippet.")
+        source = str(row.get("source") or "unknown")
+        st.markdown(f"**{i}. {claim}**")
+        st.caption(f"{evidence} [{source}]")
+
+
 SOURCE_MATRIX_FIELDS = [
     ("authors", "Author/s"),
     ("date_of_research", "Date of research"),
@@ -325,12 +345,25 @@ def _answer_paper_chat(
     docs: list[dict[str, str]],
     focus: str,
     llm_enabled: bool,
-) -> tuple[str, bool, str]:
+) -> tuple[str, bool, str, dict[str, Any]]:
     if not llm_enabled:
+        answer = _deterministic_chat_answer(question, docs)
+        contract = {
+            "confidence_label": "low",
+            "insufficient_evidence": "insufficient evidence" in answer.lower(),
+            "claim_evidence": [
+                {
+                    "claim": "Answer grounded only in selected papers.",
+                    "evidence": answer[:260],
+                    "source": "deterministic_chat",
+                }
+            ],
+        }
         return (
-            _deterministic_chat_answer(question, docs),
+            answer,
             False,
             "llm_disabled: chat fallback used",
+            contract,
         )
     context_block = "\n\n".join(
         f"SOURCE: {d['source']}\nTEXT:\n{d['text'][:2200]}" for d in docs
@@ -344,12 +377,37 @@ def _answer_paper_chat(
         f"Sources:\n{context_block}\n"
     )
     try:
-        return (invoke_gemini_prompt(prompt), True, "")
+        answer = invoke_gemini_prompt(prompt)
+        contract = {
+            "confidence_label": "medium",
+            "insufficient_evidence": "insufficient evidence" in answer.lower(),
+            "claim_evidence": [
+                {
+                    "claim": "Chat answer is grounded in selected sources.",
+                    "evidence": answer[:260],
+                    "source": "chat_response",
+                }
+            ],
+        }
+        return (answer, True, "", contract)
     except Exception as e:
+        answer = _deterministic_chat_answer(question, docs)
+        contract = {
+            "confidence_label": "low",
+            "insufficient_evidence": "insufficient evidence" in answer.lower(),
+            "claim_evidence": [
+                {
+                    "claim": "Fallback chat answer uses deterministic source overlap.",
+                    "evidence": answer[:260],
+                    "source": "deterministic_chat_fallback",
+                }
+            ],
+        }
         return (
-            _deterministic_chat_answer(question, docs),
+            answer,
             False,
             f"llm_error: {str(e)}",
+            contract,
         )
 
 
@@ -1090,13 +1148,15 @@ if st.session_state.results:
                 unsafe_allow_html=True,
             )
 
-            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
                 [
                     ":material/notes: Summary",
                     ":material/vpn_key: Key Findings",
                     ":material/build: Methodology",
                     ":material/table_chart: Evidence Matrix",
                     ":material/report: Risk flags",
+                    ":material/lightbulb: Citation-use examples",
+                    ":material/fact_check: Evidence contract",
                     ":material/account_tree: Agent trace",
                 ]
             )
@@ -1119,7 +1179,10 @@ if st.session_state.results:
             with tab6:
                 _render_citation_use_examples(list(result.get("citation_use_examples") or []))
 
-            with tab6:
+            with tab7:
+                _render_evidence_contract(dict(result.get("evidence_contract") or {}))
+
+            with tab8:
                 trace = result.get("trace") or []
                 oid = result.get("trace_id")
                 if oid:
@@ -1200,7 +1263,7 @@ if st.session_state.discovery_results:
                     unsafe_allow_html=True,
                 )
 
-                tab_overview, tab_matrix, tab_risk, tab_abstract, tab_links, tab_use = st.tabs(
+                tab_overview, tab_matrix, tab_risk, tab_abstract, tab_links, tab_use, tab_contract = st.tabs(
                     [
                         ":material/push_pin: Overview",
                         ":material/table_chart: Evidence Matrix",
@@ -1208,6 +1271,7 @@ if st.session_state.discovery_results:
                         ":material/article: Abstract",
                         ":material/link: Sources",
                         ":material/lightbulb: Citation-use examples",
+                        ":material/fact_check: Evidence contract",
                     ]
                 )
                 with tab_overview:
@@ -1231,6 +1295,8 @@ if st.session_state.discovery_results:
                         st.caption("No external links available for this work.")
                 with tab_use:
                     _render_citation_use_examples(list(item.get("citation_use_examples") or []))
+                with tab_contract:
+                    _render_evidence_contract(dict(item.get("evidence_contract") or {}))
                 st.markdown("---")
             st.markdown("#### :material/account_tree: Agent trace")
             trace = run.get("trace") or []
@@ -1283,7 +1349,20 @@ if all_chat_docs:
                 meta = "LLM used" if llm_used_chat else (fallback or "deterministic fallback")
                 st.markdown(answer)
                 st.caption(meta)
-            messages.append({"role": "assistant", "content": answer, "meta": meta})
+            confidence = _infer_chat_confidence_label(answer)
+            insufficient = _chat_answer_insufficient(answer)
+            contract = _build_chat_evidence_contract(answer)
+            if contract:
+                with st.chat_message("assistant"):
+                    st.markdown("**Evidence contract**")
+                    _render_evidence_contract(contract)
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": answer,
+                    "meta": f"{meta} | confidence={confidence} | insufficient_evidence={'yes' if insufficient else 'no'}",
+                }
+            )
             st.session_state[chat_key] = messages
             st.rerun()
     else:
