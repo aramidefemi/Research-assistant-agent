@@ -345,25 +345,12 @@ def _answer_paper_chat(
     docs: list[dict[str, str]],
     focus: str,
     llm_enabled: bool,
-) -> tuple[str, bool, str, dict[str, Any]]:
+) -> tuple[str, bool, str]:
     if not llm_enabled:
-        answer = _deterministic_chat_answer(question, docs)
-        contract = {
-            "confidence_label": "low",
-            "insufficient_evidence": "insufficient evidence" in answer.lower(),
-            "claim_evidence": [
-                {
-                    "claim": "Answer grounded only in selected papers.",
-                    "evidence": answer[:260],
-                    "source": "deterministic_chat",
-                }
-            ],
-        }
         return (
-            answer,
+            _deterministic_chat_answer(question, docs),
             False,
             "llm_disabled: chat fallback used",
-            contract,
         )
     context_block = "\n\n".join(
         f"SOURCE: {d['source']}\nTEXT:\n{d['text'][:2200]}" for d in docs
@@ -377,37 +364,12 @@ def _answer_paper_chat(
         f"Sources:\n{context_block}\n"
     )
     try:
-        answer = invoke_gemini_prompt(prompt)
-        contract = {
-            "confidence_label": "medium",
-            "insufficient_evidence": "insufficient evidence" in answer.lower(),
-            "claim_evidence": [
-                {
-                    "claim": "Chat answer is grounded in selected sources.",
-                    "evidence": answer[:260],
-                    "source": "chat_response",
-                }
-            ],
-        }
-        return (answer, True, "", contract)
+        return (invoke_gemini_prompt(prompt), True, "")
     except Exception as e:
-        answer = _deterministic_chat_answer(question, docs)
-        contract = {
-            "confidence_label": "low",
-            "insufficient_evidence": "insufficient evidence" in answer.lower(),
-            "claim_evidence": [
-                {
-                    "claim": "Fallback chat answer uses deterministic source overlap.",
-                    "evidence": answer[:260],
-                    "source": "deterministic_chat_fallback",
-                }
-            ],
-        }
         return (
-            answer,
+            _deterministic_chat_answer(question, docs),
             False,
             f"llm_error: {str(e)}",
-            contract,
         )
 
 
@@ -1349,20 +1311,7 @@ if all_chat_docs:
                 meta = "LLM used" if llm_used_chat else (fallback or "deterministic fallback")
                 st.markdown(answer)
                 st.caption(meta)
-            confidence = _infer_chat_confidence_label(answer)
-            insufficient = _chat_answer_insufficient(answer)
-            contract = _build_chat_evidence_contract(answer)
-            if contract:
-                with st.chat_message("assistant"):
-                    st.markdown("**Evidence contract**")
-                    _render_evidence_contract(contract)
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": answer,
-                    "meta": f"{meta} | confidence={confidence} | insufficient_evidence={'yes' if insufficient else 'no'}",
-                }
-            )
+            messages.append({"role": "assistant", "content": answer, "meta": meta})
             st.session_state[chat_key] = messages
             st.rerun()
     else:

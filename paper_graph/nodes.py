@@ -494,48 +494,14 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
             state.get("pdf_text", ""),
             topic_hint=str(st.session_state.get("research_focus", "")).strip(),
         )
-        risk_flags = _extract_methodology_risk_flags(
-            title=str(state.get("filename") or ""),
-            abstract=str(state.get("summary") or ""),
-            source_profile=source_profile,
-            methodology_text=str(state.get("methodology") or ""),
-        )
-        citation_use_examples = _build_pdf_citation_use_examples(
-            {
-                **state,
-                "source_profile": source_profile,
-                "risk_flags": risk_flags,
-            }
-        )
-        s2: PaperState = _with_fallback_meta(
-            {
-                **state,
-                "source_profile": source_profile,
-                "risk_flags": risk_flags,
-                "citation_use_examples": citation_use_examples,
-                "evidence_contract": _build_pdf_evidence_contract(
-                    {
-                        **state,
-                        "risk_flags": risk_flags,
-                    },
-                    risk_flags,
-                ),
-            },
-            "llm_disabled: matrix fallback used",
-        )
+        s2: PaperState = _with_fallback_meta({**state, "source_profile": source_profile}, "llm_disabled: matrix fallback used")
         return append_trace(
             s2,
             "evaluate_matrix",
             "Deterministic source profile fallback (LLM disabled).",
             detail="No-LLM mode enabled.",
             duration_ms=0.0,
-            result={
-                "source_profile": source_profile,
-                "risk_flags": risk_flags,
-                "citation_use_examples": citation_use_examples,
-                "llm_used": False,
-                "fallback_reason": s2.get("fallback_reason", ""),
-            },
+            result={"source_profile": source_profile, "llm_used": False, "fallback_reason": s2.get("fallback_reason", "")},
         )
 
     try:
@@ -551,46 +517,13 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
         content = invoke_gemini_prompt(prompt)
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         source_profile = _parse_source_profile(content)
-        risk_flags = _extract_methodology_risk_flags(
-            title=str(state.get("filename") or ""),
-            abstract=str(state.get("summary") or ""),
-            source_profile=source_profile,
-            methodology_text=str(state.get("methodology") or ""),
-        )
-        citation_use_examples = _build_pdf_citation_use_examples(
-            {
-                **state,
-                "source_profile": source_profile,
-                "risk_flags": risk_flags,
-            }
-        )
-        s2: PaperState = _with_llm_used(
-            {
-                **state,
-                "source_profile": source_profile,
-                "risk_flags": risk_flags,
-                "citation_use_examples": citation_use_examples,
-                "evidence_contract": _build_pdf_evidence_contract(
-                    {
-                        **state,
-                        "risk_flags": risk_flags,
-                    },
-                    risk_flags,
-                ),
-            }
-        )
+        s2: PaperState = _with_llm_used({**state, "source_profile": source_profile})
         return append_trace(
             s2,
             "evaluate_matrix",
             "Extracted dedicated evaluation matrix fields from paper content.",
             duration_ms=elapsed_ms,
-            result={
-                "source_profile": source_profile,
-                "risk_flags": risk_flags,
-                "citation_use_examples": citation_use_examples,
-                "llm_used": True,
-                "fallback_reason": s2.get("fallback_reason", ""),
-            },
+            result={"source_profile": source_profile, "llm_used": True, "fallback_reason": s2.get("fallback_reason", "")},
         )
     except Exception as e:
         err_state = _with_fallback_meta(state, f"llm_error: {str(e)}")
@@ -598,44 +531,13 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
             state.get("pdf_text", ""),
             topic_hint=str(st.session_state.get("research_focus", "")).strip(),
         )
-        risk_flags = _extract_methodology_risk_flags(
-            title=str(state.get("filename") or ""),
-            abstract=str(state.get("summary") or ""),
-            source_profile=source_profile,
-            methodology_text=str(state.get("methodology") or ""),
-        )
-        citation_use_examples = _build_pdf_citation_use_examples(
-            {
-                **state,
-                "source_profile": source_profile,
-                "risk_flags": risk_flags,
-            }
-        )
         return append_trace(
-            {
-                **err_state,
-                "source_profile": source_profile,
-                "risk_flags": risk_flags,
-                "citation_use_examples": citation_use_examples,
-                "evidence_contract": _build_pdf_evidence_contract(
-                    {
-                        **state,
-                        "risk_flags": risk_flags,
-                    },
-                    risk_flags,
-                ),
-            },
+            {**err_state, "source_profile": source_profile},
             "evaluate_matrix",
             "Matrix LLM failed; deterministic source profile fallback used.",
             detail=str(e),
             duration_ms=0.0,
-            result={
-                "source_profile": source_profile,
-                "risk_flags": risk_flags,
-                "citation_use_examples": citation_use_examples,
-                "llm_used": bool(err_state.get("llm_used", False)),
-                "fallback_reason": err_state.get("fallback_reason", ""),
-            },
+            result={"source_profile": source_profile, "llm_used": bool(err_state.get("llm_used", False)), "fallback_reason": err_state.get("fallback_reason", "")},
         )
 
 
