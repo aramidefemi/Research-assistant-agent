@@ -52,3 +52,57 @@ def persist_pipeline_run(payload: dict[str, Any]) -> str | None:
         return str(result.inserted_id)
     except Exception:
         return None
+
+
+def fetch_usage_stats(limit_recent: int = 10) -> dict[str, Any]:
+    """Return aggregate usage stats from stored pipeline traces."""
+    empty = {
+        "available": False,
+        "total_runs": 0,
+        "error_runs": 0,
+        "fit_runs": 0,
+        "llm_runs": 0,
+        "fallback_runs": 0,
+        "recent_runs": [],
+    }
+    uri = _mongo_uri()
+    if not uri:
+        return empty
+    try:
+        from pymongo import MongoClient
+
+        client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+        client.admin.command("ping")
+        coll = client["research_assistant"]["pipeline_traces"]
+        total_runs = coll.count_documents({})
+        error_runs = coll.count_documents({"error": {"$nin": [None, ""]}})
+        fit_runs = coll.count_documents({"fit": True})
+        llm_runs = coll.count_documents({"llm_used": True})
+        fallback_runs = coll.count_documents({"fallback_reason": {"$nin": [None, ""]}})
+        recent_cursor = (
+            coll.find(
+                {},
+                {
+                    "_id": 0,
+                    "filename": 1,
+                    "research_focus": 1,
+                    "fit": 1,
+                    "error": 1,
+                    "llm_used": 1,
+                    "stored_at": 1,
+                },
+            )
+            .sort("stored_at", -1)
+            .limit(max(1, int(limit_recent)))
+        )
+        return {
+            "available": True,
+            "total_runs": int(total_runs),
+            "error_runs": int(error_runs),
+            "fit_runs": int(fit_runs),
+            "llm_runs": int(llm_runs),
+            "fallback_runs": int(fallback_runs),
+            "recent_runs": list(recent_cursor),
+        }
+    except Exception:
+        return empty

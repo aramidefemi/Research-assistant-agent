@@ -834,6 +834,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# quick nav for multipage setup without relying on sidebar
+st.page_link("app.py", label="Research workspace", icon=":material/home:")
+st.page_link("pages/Admin_Usage_Stats.py", label="Admin usage stats", icon=":material/admin_panel_settings:")
+
 # ── Session state init ────────────────────────────────────────────────────────
 if "results" not in st.session_state:
     st.session_state.results = []
