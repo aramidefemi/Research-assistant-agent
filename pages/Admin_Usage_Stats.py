@@ -13,6 +13,7 @@ try:
 except Exception:
     def render_page_nav() -> None:
         st.markdown("[Research workspace](/) · [Admin usage stats](/Admin_Usage_Stats)")
+        return None
 from utils.trace_store import fetch_usage_stats, log_usage_event
 
 
