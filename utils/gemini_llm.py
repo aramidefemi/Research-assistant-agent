@@ -10,6 +10,7 @@ from urllib import request as urlrequest
 from collections.abc import Iterator
 
 from dotenv import load_dotenv
+from utils.trace_store import log_llm_usage
 
 _ENV_LOADED = False
 _RATE_LOCK = threading.Lock()
@@ -127,12 +128,22 @@ def _invoke_gemini(prompt: str) -> str:
             try:
                 _wait_for_rate_slot(min_interval_s)
                 resp = model.generate_content(prompt)
+                usage = getattr(resp, "usage_metadata", None)
                 try:
                     text = (resp.text or "").strip()
                 except ValueError as ve:
                     raise RuntimeError("Gemini returned no usable text (blocked or empty).") from ve
                 if not text:
                     raise RuntimeError("Gemini returned an empty response.")
+                if usage is not None:
+                    log_llm_usage(
+                        provider="gemini",
+                        model=model_name,
+                        prompt_tokens=int(getattr(usage, "prompt_token_count", 0) or 0),
+                        completion_tokens=int(getattr(usage, "candidates_token_count", 0) or 0),
+                        total_tokens=int(getattr(usage, "total_token_count", 0) or 0),
+                        mode="sync",
+                    )
                 return text
             except Exception as e:
                 last = e
@@ -195,6 +206,16 @@ def _invoke_openrouter(prompt: str) -> str:
         raise RuntimeError("OpenRouter returned unexpected response format.") from err
     if not text:
         raise RuntimeError("OpenRouter returned an empty response.")
+    usage = body.get("usage") if isinstance(body, dict) else None
+    if isinstance(usage, dict):
+        log_llm_usage(
+            provider="openrouter",
+            model=model,
+            prompt_tokens=int(usage.get("prompt_tokens") or 0),
+            completion_tokens=int(usage.get("completion_tokens") or 0),
+            total_tokens=int(usage.get("total_tokens") or 0),
+            mode="sync",
+        )
     return text
 
 
@@ -249,6 +270,16 @@ def _invoke_openai_compatible(prompt: str) -> str:
         raise RuntimeError("OPENAI provider returned unexpected response format.") from err
     if not text:
         raise RuntimeError("OPENAI provider returned an empty response.")
+    usage = getattr(resp, "usage", None)
+    if usage is not None:
+        log_llm_usage(
+            provider="openai_compatible",
+            model=model,
+            prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+            completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+            total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
+            mode="sync",
+        )
     return text
 
 
@@ -341,17 +372,33 @@ def _invoke_openai_compatible_stream(prompt: str) -> Iterator[str]:
         raise RuntimeError(f"OPENAI provider call failed: {err}") from err
 
     seen_any = False
+    prompt_tokens = 0
+    completion_tokens = 0
+    total_tokens = 0
     for event in stream:
         try:
             piece = event.choices[0].delta.content
         except (AttributeError, IndexError, TypeError):
             piece = None
+        usage = getattr(event, "usage", None)
+        if usage is not None:
+            prompt_tokens = max(prompt_tokens, int(getattr(usage, "prompt_tokens", 0) or 0))
+            completion_tokens = max(completion_tokens, int(getattr(usage, "completion_tokens", 0) or 0))
+            total_tokens = max(total_tokens, int(getattr(usage, "total_tokens", 0) or 0))
         if not piece:
             continue
         seen_any = True
         yield piece
     if not seen_any:
         raise RuntimeError("OPENAI provider returned no streamed text.")
+    log_llm_usage(
+        provider="openai_compatible",
+        model=model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        mode="stream",
+    )
 
 
 def invoke_gemini_prompt(prompt: str) -> str:

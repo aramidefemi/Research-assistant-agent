@@ -7,7 +7,7 @@ from html import escape
 from typing import Any
 from collections.abc import Iterator
 from utils.pdf_reader import extract_text_from_pdf
-from utils.trace_store import persist_pipeline_run
+from utils.trace_store import persist_pipeline_run, log_app_error, log_usage_event
 from utils.trace_flowchart import build_trace_flowchart_dot
 from utils.gemini_llm import invoke_gemini_prompt, invoke_gemini_prompt_stream
 from paper_graph.pipeline import pipeline, discovery_pipeline
@@ -420,6 +420,12 @@ def run_pipeline_stream(graph, initial_state: dict, live_placeholder, run_label:
                 st.markdown(f"#### :material/timeline: Live agent trace — `{run_label}`")
                 write_trace_steps(chunk.get("trace") or [])
     except Exception as e:
+        log_app_error(
+            error=e,
+            context="run_pipeline_stream",
+            filename=str(initial_state.get("filename") or run_label),
+            extra={"run_label": run_label[:120]},
+        )
         trace = list(result.get("trace") or [])
         trace.append(
             {
@@ -847,6 +853,11 @@ if "discovery_results" not in st.session_state:
     st.session_state.discovery_results = []
 if "llm_enabled" not in st.session_state:
     st.session_state.llm_enabled = True
+if "usage_open_logged" not in st.session_state:
+    st.session_state.usage_open_logged = False
+if not st.session_state.usage_open_logged:
+    log_usage_event("app_page_open", {"page": "research_workspace"})
+    st.session_state.usage_open_logged = True
 
 # ── Main area ─────────────────────────────────────────────────────────────────
 total = len(st.session_state.results)
@@ -1006,6 +1017,12 @@ if has_papers == "Yes":
                         st.session_state.results.append(result)
 
                     except Exception as e:
+                        log_app_error(
+                            error=e,
+                            context="pdf_upload_process",
+                            filename=uploaded_file.name,
+                            extra={"research_focus": (st.session_state.get("research_focus") or "")[:120]},
+                        )
                         st.session_state.results.append(
                             {
                                 "filename": uploaded_file.name,
@@ -1350,25 +1367,48 @@ if all_chat_docs:
             with st.chat_message("assistant"):
                 status_line = st.empty()
                 status_line.caption(":material/schedule: Preparing grounded answer...")
-                stream_iter, llm_used_chat, fallback = _answer_paper_chat_stream(
-                    user_q,
-                    selected_docs,
-                    focus,
-                    bool(st.session_state.get("llm_enabled", True)),
-                )
-                status_line.caption(":material/sync: Generating response...")
-                answer = st.write_stream(stream_iter)
-                if not isinstance(answer, str):
-                    answer = str(answer or "").strip()
-                if not answer:
-                    answer, llm_used_chat, fallback = _answer_paper_chat(
+                llm_used_chat = False
+                fallback = ""
+                answer = ""
+                try:
+                    stream_iter, llm_used_chat, fallback = _answer_paper_chat_stream(
                         user_q,
                         selected_docs,
                         focus,
                         bool(st.session_state.get("llm_enabled", True)),
                     )
-                    st.markdown(answer)
+                    status_line.caption(":material/sync: Generating response...")
+                    answer = st.write_stream(stream_iter)
+                    if not isinstance(answer, str):
+                        answer = str(answer or "").strip()
+                    if not answer:
+                        answer, llm_used_chat, fallback = _answer_paper_chat(
+                            user_q,
+                            selected_docs,
+                            focus,
+                            bool(st.session_state.get("llm_enabled", True)),
+                        )
+                        st.markdown(answer)
+                except Exception as e:
+                    log_app_error(
+                        error=e,
+                        context="chat_answer",
+                        extra={"question_len": len(user_q), "source_count": len(selected_docs)},
+                    )
+                    answer = "Sorry, chat response failed. Please try again."
+                    fallback = f"chat_error: {str(e)}"
+                    st.error(answer)
                 meta = "LLM used" if llm_used_chat else (fallback or "deterministic fallback")
+                log_usage_event(
+                    "chat_interaction",
+                    {
+                        "question_len": len(user_q),
+                        "answer_len": len(answer or ""),
+                        "source_count": len(selected_docs),
+                        "llm_used": bool(llm_used_chat),
+                        "fallback_reason": (fallback or "")[:160],
+                    },
+                )
                 status_line.caption(":material/check_circle: Response ready")
                 st.caption(meta)
             messages.append({"role": "assistant", "content": answer, "meta": meta})
