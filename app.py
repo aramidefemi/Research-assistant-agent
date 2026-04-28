@@ -998,12 +998,19 @@ else:
         max_rounds = st.number_input("Max rounds", min_value=1, max_value=12, value=5)
     with config_col2:
         batch_size = st.number_input("Candidates per round", min_value=3, max_value=20, value=8)
+    target_qualified_count = st.number_input(
+        "Target qualified papers",
+        min_value=3,
+        max_value=10,
+        value=3,
+        help="Discovery stops once this many qualified papers are found.",
+    )
     st.markdown(
         _build_stats_grid_html(
             [
                 ("Round limit", str(int(max_rounds)), "How many search passes to allow"),
                 ("Candidates / round", str(int(batch_size)), "Papers screened each pass"),
-                ("Target qualified", "2", "Current stop threshold"),
+                ("Target qualified", str(int(target_qualified_count)), "Current stop threshold"),
             ]
         ),
         unsafe_allow_html=True,
@@ -1028,7 +1035,7 @@ else:
             "topic": topic,
             "discovery_batch_size": int(batch_size),
             "max_discovery_rounds": int(max_rounds),
-            "target_qualified_count": 2,
+            "target_qualified_count": int(target_qualified_count),
             "qualified_works": [],
             "evaluated_candidates": [],
             "discovered_candidates": [],
@@ -1190,7 +1197,8 @@ if st.session_state.discovery_results:
             )
             if not qualified:
                 st.info("No qualified works found within current limits.")
-            for idx, item in enumerate(qualified[:2], start=1):
+            visible_qualified = int(run.get("target_qualified_count") or 3)
+            for idx, item in enumerate(qualified[:visible_qualified], start=1):
                 score = float(item.get("score") or 0.0)
                 fit = bool(item.get("fit"))
                 quality = bool(item.get("quality"))
