@@ -123,6 +123,17 @@ def _build_summary_card_html(
     )
 
 
+def _render_risk_flags(flags: list[dict[str, str]]) -> None:
+    if not flags:
+        st.caption("No explicit risk flags found.")
+        return
+    for i, flag in enumerate(flags, start=1):
+        label = str(flag.get("label") or "Risk flag")
+        evidence = str(flag.get("evidence") or "No evidence snippet available.")
+        st.markdown(f"**{i}. {label}**")
+        st.caption(evidence)
+
+
 SOURCE_MATRIX_FIELDS = [
     ("authors", "Author/s"),
     ("date_of_research", "Date of research"),
@@ -1069,12 +1080,13 @@ if st.session_state.results:
                 unsafe_allow_html=True,
             )
 
-            tab1, tab2, tab3, tab4, tab5 = st.tabs(
+            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
                 [
                     ":material/notes: Summary",
                     ":material/vpn_key: Key Findings",
                     ":material/build: Methodology",
                     ":material/table_chart: Evidence Matrix",
+                    ":material/report: Risk flags",
                     ":material/account_tree: Agent trace",
                 ]
             )
@@ -1092,6 +1104,9 @@ if st.session_state.results:
                 _render_source_matrix(dict(result.get("source_profile") or {}))
 
             with tab5:
+                _render_risk_flags(list(result.get("risk_flags") or []))
+
+            with tab6:
                 trace = result.get("trace") or []
                 oid = result.get("trace_id")
                 if oid:
@@ -1172,10 +1187,11 @@ if st.session_state.discovery_results:
                     unsafe_allow_html=True,
                 )
 
-                tab_overview, tab_matrix, tab_abstract, tab_links = st.tabs(
+                tab_overview, tab_matrix, tab_risk, tab_abstract, tab_links = st.tabs(
                     [
                         ":material/push_pin: Overview",
                         ":material/table_chart: Evidence Matrix",
+                        ":material/report: Risk flags",
                         ":material/article: Abstract",
                         ":material/link: Sources",
                     ]
@@ -1188,6 +1204,8 @@ if st.session_state.discovery_results:
                     st.markdown(f"**Scholarly quality:** {'YES' if quality else 'NO'}")
                 with tab_matrix:
                     _render_source_matrix(dict(item.get("source_profile") or {}))
+                with tab_risk:
+                    _render_risk_flags(list(item.get("risk_flags") or []))
                 with tab_abstract:
                     st.markdown(item.get("abstract") or "Abstract not available.")
                 with tab_links:

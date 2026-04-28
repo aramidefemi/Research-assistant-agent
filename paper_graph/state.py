@@ -9,6 +9,7 @@ class PaperState(TypedDict):
     relevance_score: float
     relevance_reason: str
     source_profile: NotRequired[dict[str, str]]
+    risk_flags: NotRequired[list[dict[str, str]]]
     fit: bool
     error: Optional[str]
     llm_enabled: NotRequired[bool]
@@ -32,4 +33,5 @@ class PaperState(TypedDict):
     candidate_quality: NotRequired[bool]
     candidate_reason: NotRequired[str]
     candidate_source_profile: NotRequired[dict[str, str]]
+    candidate_risk_flags: NotRequired[list[dict[str, str]]]
     candidate_eval_duration_ms: NotRequired[float | None]

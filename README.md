@@ -24,6 +24,7 @@ Topic → discovery_init → discovery_search → discovery_evaluate ↺ until 2
 3. Topic discovery loops over external journal search and your evaluator until at least 2 qualified papers are found or max rounds are reached.
 4. Results show score, fit, reasons, and an **Agent trace** with per-node contributions.
 5. Use **Interactive paper chat** to ask follow-up questions grounded in selected scored/discovered papers, with citation anchors.
+6. Review **Methodology & risk flags** on each paper to quickly spot sample-size, baseline, ablation, and evaluation-clarity concerns with evidence snippets.
 
 ## Orchestration and tracing
 
