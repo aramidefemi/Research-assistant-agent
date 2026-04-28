@@ -651,6 +651,8 @@ if "research_focus" not in st.session_state:
     st.session_state.research_focus = ""
 if "discovery_results" not in st.session_state:
     st.session_state.discovery_results = []
+if "llm_enabled" not in st.session_state:
+    st.session_state.llm_enabled = True
 
 # ── Main area ─────────────────────────────────────────────────────────────────
 total = len(st.session_state.results)
@@ -695,6 +697,11 @@ topic_input = st.text_area(
     height=110,
 )
 st.session_state.research_focus = (topic_input or "").strip()
+st.toggle(
+    "Use LLM (disable for deterministic fallback mode)",
+    key="llm_enabled",
+    help="When off, all LLM-dependent steps use deterministic rule-based fallbacks.",
+)
 
 st.markdown(
     _build_section_intro_html(
@@ -763,6 +770,9 @@ if has_papers == "Yes":
                             "source_profile": {},
                             "fit": False,
                             "error": None,
+                            "llm_enabled": bool(st.session_state.get("llm_enabled", True)),
+                            "llm_used": False,
+                            "fallback_reason": "",
                             "trace": [],
                         }
 
@@ -793,6 +803,8 @@ if has_papers == "Yes":
                                 "relevance_score": result.get("relevance_score"),
                                 "fit": result.get("fit"),
                                 "error": result.get("error"),
+                                "llm_used": result.get("llm_used"),
+                                "fallback_reason": result.get("fallback_reason"),
                             }
                         )
                         if trace_id:
@@ -853,6 +865,9 @@ else:
             "relevance_reason": "",
             "fit": False,
             "error": None,
+            "llm_enabled": bool(st.session_state.get("llm_enabled", True)),
+            "llm_used": False,
+            "fallback_reason": "",
             "trace": [],
             "topic": topic,
             "discovery_batch_size": int(batch_size),
@@ -918,6 +933,11 @@ if st.session_state.results:
                     eyebrow="PDF evaluation",
                     badges=[
                         _build_badge_html(status_label, score_tone, "check_circle" if fit else "cancel"),
+                        _build_badge_html(
+                            "LLM used" if result.get("llm_used") else "No-LLM fallback",
+                            "neutral",
+                            "smart_toy" if result.get("llm_used") else "rule",
+                        ),
                         _build_badge_html("Trace available", "neutral", "account_tree"),
                     ],
                     score=score,
@@ -960,6 +980,9 @@ if st.session_state.results:
                 oid = result.get("trace_id")
                 if oid:
                     st.caption(f"Stored run id: `{oid}` (MongoDB)")
+                fb = (result.get("fallback_reason") or "").strip()
+                if fb:
+                    st.caption(f"Fallback reason: {fb}")
                 st.markdown("**Flowchart**")
                 write_trace_flowchart(trace)
                 st.markdown("**Step-by-step trace**")

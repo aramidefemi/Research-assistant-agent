@@ -11,6 +11,9 @@ class PaperState(TypedDict):
     source_profile: NotRequired[dict[str, str]]
     fit: bool
     error: Optional[str]
+    llm_enabled: NotRequired[bool]
+    llm_used: NotRequired[bool]
+    fallback_reason: NotRequired[str]
     trace: NotRequired[list[dict[str, Any]]]
     topic: NotRequired[str]
     discovery_query: NotRequired[str]

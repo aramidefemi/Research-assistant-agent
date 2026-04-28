@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import threading
 import time
 
@@ -105,6 +106,31 @@ def summarise_node(state: PaperState) -> PaperState:
     if state.get("error"):
         return state
 
+    if not _llm_enabled(state):
+        summary, key_findings, methodology = _fallback_summary_sections(state["pdf_text"])
+        s2 = _with_fallback_meta(
+            {
+                **state,
+                "summary": summary,
+                "key_findings": key_findings,
+                "methodology": methodology,
+            },
+            "llm_disabled",
+        )
+        return append_trace(
+            s2,
+            "summarise",
+            "Deterministic summarisation fallback (LLM disabled).",
+            detail="No-LLM mode enabled by user toggle.",
+            duration_ms=0.0,
+            result={
+                "summary": summary,
+                "key_findings": key_findings,
+                "methodology": methodology,
+                "llm_used": False,
+                "fallback_reason": s2.get("fallback_reason", ""),
+            },
+        )
     try:
         prompt = SUMMARISE_PROMPT.format(pdf_text=state["pdf_text"])
         t0 = time.perf_counter()
@@ -116,12 +142,12 @@ def summarise_node(state: PaperState) -> PaperState:
         key_findings = _extract_section(content, "KEY_FINDINGS:", "METHODOLOGY:")
         methodology = _extract_section(content, "METHODOLOGY:", None)
 
-        s2 = {
+        s2 = _with_llm_used({
             **state,
             "summary": summary.strip(),
             "key_findings": key_findings.strip(),
             "methodology": methodology.strip(),
-        }
+        })
         return append_trace(
             s2,
             "summarise",
@@ -132,6 +158,8 @@ def summarise_node(state: PaperState) -> PaperState:
                 "summary": summary.strip(),
                 "key_findings": key_findings.strip(),
                 "methodology": methodology.strip(),
+                "llm_used": True,
+                "fallback_reason": s2.get("fallback_reason", ""),
             },
         )
     except Exception as e:
@@ -223,6 +251,22 @@ def evaluate_reason_node(state: PaperState) -> PaperState:
     if state.get("error"):
         return state
 
+    if not _llm_enabled(state):
+        reason = _deterministic_reason(
+            st.session_state.get("research_focus", "General ML and AI research"),
+            float(state.get("relevance_score") or 0.0),
+            bool(state.get("fit")),
+        )
+        s2 = {**state, "relevance_reason": reason}
+        s2 = _with_fallback_meta(s2, "llm_disabled: reason fallback used")
+        return append_trace(
+            s2,
+            "evaluate_reason",
+            "Deterministic reason fallback (LLM disabled).",
+            detail="No-LLM mode enabled.",
+            duration_ms=0.0,
+            result={"reason": reason, "llm_used": False, "fallback_reason": s2.get("fallback_reason", "")},
+        )
     try:
         research_focus = st.session_state.get("research_focus", "General ML and AI research")
         score = state["relevance_score"]
@@ -240,7 +284,7 @@ def evaluate_reason_node(state: PaperState) -> PaperState:
         content = invoke_gemini_prompt(prompt)
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         reason = _parse_reason(content)
-        ev: PaperState = {**state, "relevance_reason": reason}
+        ev: PaperState = _with_llm_used({**state, "relevance_reason": reason})
         excerpt = reason[:280] + ("…" if len(reason) > 280 else "")
         return append_trace(
             ev,
@@ -248,14 +292,23 @@ def evaluate_reason_node(state: PaperState) -> PaperState:
             "Narrative explanation for the score and fit.",
             detail=f"{excerpt} | model call {elapsed_ms:.0f} ms.",
             duration_ms=elapsed_ms,
-            result={"reason": reason},
+            result={"reason": reason, "llm_used": True, "fallback_reason": ev.get("fallback_reason", "")},
         )
     except Exception as e:
+        err_state = _with_fallback_meta(state, f"llm_error: {str(e)}")
+        reason = _deterministic_reason(
+            st.session_state.get("research_focus", "General ML and AI research"),
+            float(state.get("relevance_score") or 0.0),
+            bool(state.get("fit")),
+        )
+        s2 = {**err_state, "relevance_reason": reason}
         return append_trace(
-            {**state, "error": f"Evaluation reasoning failed: {str(e)}"},
+            s2,
             "evaluate_reason",
-            "Reasoning step failed.",
-            detail=str(e),
+            "Reasoning LLM failed; deterministic reason fallback used.",
+            detail=str(e)[:220],
+            duration_ms=0.0,
+            result={"reason": reason, "llm_used": bool(s2.get("llm_used", False)), "fallback_reason": s2.get("fallback_reason", "")},
         )
 
 
@@ -263,6 +316,21 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
     """Structured evidence matrix extraction (dedicated evaluation step)."""
     if state.get("error"):
         return state
+
+    if not _llm_enabled(state):
+        source_profile = _deterministic_source_profile_from_text(
+            state.get("pdf_text", ""),
+            topic_hint=str(st.session_state.get("research_focus", "")).strip(),
+        )
+        s2: PaperState = _with_fallback_meta({**state, "source_profile": source_profile}, "llm_disabled: matrix fallback used")
+        return append_trace(
+            s2,
+            "evaluate_matrix",
+            "Deterministic source profile fallback (LLM disabled).",
+            detail="No-LLM mode enabled.",
+            duration_ms=0.0,
+            result={"source_profile": source_profile, "llm_used": False, "fallback_reason": s2.get("fallback_reason", "")},
+        )
 
     try:
         research_focus = st.session_state.get("research_focus", "General ML and AI research")
@@ -277,23 +345,27 @@ def evaluate_matrix_node(state: PaperState) -> PaperState:
         content = invoke_gemini_prompt(prompt)
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         source_profile = _parse_source_profile(content)
-        s2: PaperState = {
-            **state,
-            "source_profile": source_profile,
-        }
+        s2: PaperState = _with_llm_used({**state, "source_profile": source_profile})
         return append_trace(
             s2,
             "evaluate_matrix",
             "Extracted dedicated evaluation matrix fields from paper content.",
             duration_ms=elapsed_ms,
-            result={"source_profile": source_profile},
+            result={"source_profile": source_profile, "llm_used": True, "fallback_reason": s2.get("fallback_reason", "")},
         )
     except Exception as e:
+        err_state = _with_fallback_meta(state, f"llm_error: {str(e)}")
+        source_profile = _deterministic_source_profile_from_text(
+            state.get("pdf_text", ""),
+            topic_hint=str(st.session_state.get("research_focus", "")).strip(),
+        )
         return append_trace(
-            {**state, "error": f"Evaluation matrix extraction failed: {str(e)}"},
+            {**err_state, "source_profile": source_profile},
             "evaluate_matrix",
-            "Evaluation matrix extraction failed.",
+            "Matrix LLM failed; deterministic source profile fallback used.",
             detail=str(e),
+            duration_ms=0.0,
+            result={"source_profile": source_profile, "llm_used": bool(err_state.get("llm_used", False)), "fallback_reason": err_state.get("fallback_reason", "")},
         )
 
 
@@ -422,6 +494,22 @@ def discovery_triage_candidates_node(state: PaperState) -> PaperState:
         )
 
     topic = (state.get("topic") or "").strip()
+    if not _llm_enabled(state):
+        s2 = _with_fallback_meta(state, "llm_disabled: discovery triage fallback to search order")
+        return append_trace(
+            s2,
+            "discovery_triage_candidates",
+            "No-LLM mode: skipped abstract triage and kept search order.",
+            detail="Deterministic fallback uses source search ordering.",
+            duration_ms=0.0,
+            result={
+                "ranked_count": len(candidates),
+                "refetch": False,
+                "fallback": "search_order",
+                "llm_used": False,
+                "fallback_reason": s2.get("fallback_reason", ""),
+            },
+        )
     try:
         candidates_block = _build_candidate_triage_block(candidates)
         prompt = DISCOVERY_ABSTRACT_TRIAGE_PROMPT.format(
@@ -513,6 +601,47 @@ def discovery_evaluate_candidate_node(state: PaperState) -> PaperState:
 
     topic = (state.get("topic") or "").strip()
     candidate = state.get("current_candidate")
+    if not _llm_enabled(state):
+        score = _score_focus_overlap(
+            f"{candidate.get('title', '')} {candidate.get('abstract', '')}",
+            topic,
+        )
+        fit = score >= 0.25
+        quality = bool(candidate.get("year") and int(candidate.get("year")) >= 2010)
+        reason = (
+            f"Deterministic fallback: lexical topic overlap={score:.2f}; "
+            f"quality={'YES' if quality else 'NO'} from metadata heuristics."
+        )
+        s2 = _with_fallback_meta(
+            {
+                **state,
+                "candidate_score": score,
+                "candidate_fit": fit,
+                "candidate_quality": quality,
+                "candidate_reason": reason,
+                "candidate_eval_duration_ms": 0.0,
+            },
+            "llm_disabled: candidate evaluation fallback used",
+        )
+        return append_trace(
+            s2,
+            "discovery_evaluate_candidate",
+            f"Deterministic candidate evaluation: SCORE={score:.2f}, FIT={'YES' if fit else 'NO'}, "
+            f"QUALITY={'YES' if quality else 'NO'}.",
+            detail=reason[:200],
+            duration_ms=0.0,
+            result={
+                "candidate_title": candidate.get("title", ""),
+                "score": score,
+                "fit": fit,
+                "quality": quality,
+                "reason": reason,
+                "cache_hit": False,
+                "llm_used": False,
+                "fallback_reason": s2.get("fallback_reason", ""),
+            },
+        )
+
     if not candidate:
         return state
 
@@ -691,6 +820,31 @@ def discovery_source_profile_node(state: PaperState) -> PaperState:
     topic = (state.get("topic") or "").strip()
     eval_reason = str(state.get("candidate_reason") or "")
 
+    if not _llm_enabled(state):
+        source_profile = _rule_based_discovery_source_profile(
+            candidate,
+            topic,
+            eval_reason=eval_reason,
+        )
+        s2 = _with_fallback_meta(
+            {**state, "candidate_source_profile": source_profile},
+            "llm_disabled: discovery source profile fallback used",
+        )
+        return append_trace(
+            s2,
+            "discovery_source_profile",
+            "No-LLM mode: deterministic source profile from candidate metadata.",
+            detail="Derived from title/abstract/venue/year fields.",
+            duration_ms=0.0,
+            result={
+                "candidate_title": candidate.get("title", ""),
+                "source_profile": source_profile,
+                "profile_mode": "rule",
+                "llm_used": False,
+                "fallback_reason": s2.get("fallback_reason", ""),
+            },
+        )
+
     if _discovery_profile_confidence_high(state):
         source_profile = _rule_based_discovery_source_profile(
             candidate,
@@ -710,6 +864,28 @@ def discovery_source_profile_node(state: PaperState) -> PaperState:
             },
         )
 
+    if not _llm_enabled(state):
+        source_profile = _rule_based_discovery_source_profile(
+            candidate,
+            topic,
+            eval_reason=eval_reason,
+        )
+        s2 = _with_fallback_meta({**state, "candidate_source_profile": source_profile}, "llm_disabled: discovery profile fallback used")
+        return append_trace(
+            s2,
+            "discovery_source_profile",
+            "Deterministic discovery source profile fallback (LLM disabled).",
+            detail="No-LLM mode enabled.",
+            duration_ms=0.0,
+            result={
+                "candidate_title": candidate.get("title", ""),
+                "source_profile": source_profile,
+                "profile_mode": "rule_no_llm",
+                "llm_used": False,
+                "fallback_reason": s2.get("fallback_reason", ""),
+            },
+        )
+
     try:
         prompt = DISCOVERY_SOURCE_PROFILE_PROMPT.format(
             topic=topic,
@@ -723,10 +899,7 @@ def discovery_source_profile_node(state: PaperState) -> PaperState:
         content = invoke_gemini_prompt(prompt)
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         source_profile = _parse_source_profile(content)
-        s2: PaperState = {
-            **state,
-            "candidate_source_profile": source_profile,
-        }
+        s2: PaperState = _with_llm_used({**state, "candidate_source_profile": source_profile})
         return append_trace(
             s2,
             "discovery_source_profile",
@@ -736,14 +909,30 @@ def discovery_source_profile_node(state: PaperState) -> PaperState:
                 "candidate_title": candidate.get("title", ""),
                 "source_profile": source_profile,
                 "profile_mode": "llm",
+                "llm_used": True,
+                "fallback_reason": s2.get("fallback_reason", ""),
             },
         )
     except Exception as e:
+        source_profile = _rule_based_discovery_source_profile(
+            candidate,
+            topic,
+            eval_reason=eval_reason,
+        )
+        err_state = _with_fallback_meta({**state, "candidate_source_profile": source_profile}, f"llm_error: {str(e)}")
         return append_trace(
-            {**state, "error": f"Discovery source profile extraction failed: {str(e)}"},
+            err_state,
             "discovery_source_profile",
-            "Source profile extraction failed.",
-            detail=str(e),
+            "Source profile LLM failed; deterministic fallback used.",
+            detail=str(e)[:220],
+            duration_ms=0.0,
+            result={
+                "candidate_title": candidate.get("title", ""),
+                "source_profile": source_profile,
+                "profile_mode": "rule_error_fallback",
+                "llm_used": bool(err_state.get("llm_used", False)),
+                "fallback_reason": err_state.get("fallback_reason", ""),
+            },
         )
 
 

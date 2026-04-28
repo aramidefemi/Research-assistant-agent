@@ -87,6 +87,20 @@ Configure credentials using either **environment variables** (e.g. copy `.env.ex
 
 If `LLM_PROVIDER` is unset, runtime keeps legacy auto mode: OpenRouter-first (if configured), then Gemini fallback.
 
+### Fault-tolerant no-LLM mode
+
+- The UI now includes a runtime toggle: **Use LLM (disable for deterministic fallback mode)**.
+- When disabled, or when model calls fail, the pipeline falls back to deterministic rules for:
+  - summary/key-findings/methodology extraction,
+  - relevance score + fit decision,
+  - reasoning text,
+  - evidence/source profile fields,
+  - discovery triage/evaluation/profile steps.
+- Every run now carries metadata:
+  - `llm_used: true/false`
+  - `fallback_reason: <string>`
+  and these values are also surfaced in trace step results.
+
 Run:
 
 ```bash
