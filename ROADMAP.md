@@ -2,7 +2,7 @@
 
 This roadmap prioritizes features that increase researcher trust, speed, and workflow integration.
 
-## 4 key feature updates
+## 6 key feature updates
 
 1. **Fault-tolerant no-LLM mode (with explicit opt-out)**
    - Add a deterministic fallback pipeline (regex/rules-based extraction + scoring heuristics) when LLMs are unavailable.
@@ -26,6 +26,17 @@ This roadmap prioritizes features that increase researcher trust, speed, and wor
    - Include run config (mode, prompts/rules, timestamps, model or fallback path) for reproducibility.
    - Value: shortens path from discovery to writing while preserving auditability.
 
+5. **Methodology and risk flags**
+   - Auto-highlight concerns such as small sample size, weak baselines, missing ablations, or unclear evaluation setup.
+   - Tag each flag with short evidence snippets so users can inspect the source quickly.
+   - Value: helps researchers avoid weak evidence and improves paper selection quality.
+
+6. **Citation-use examples (practical research application guidance)**
+   - For each relevant paper, generate at least 3 concrete ways the user can use it in their work.
+   - Cover distinct angles: method reuse, result benchmarking, and limitation-based research gaps.
+   - Example: for a credit scoring paper, suggest how to adopt the method, compare against its reported outcomes, or extend a stated limitation.
+   - Value: answers “how can I use this?” not just “is this relevant?”, turning relevance into actionable research steps.
+
 ## 5 nice-to-haves
 
 1. **Side-by-side paper comparison board**
@@ -34,14 +45,14 @@ This roadmap prioritizes features that increase researcher trust, speed, and wor
 2. **Custom scoring profiles per project**
    - Let users weight criteria (novelty, rigor, domain fit, recency) and save presets by research track.
 
-3. **Methodology and risk flags**
-   - Auto-highlight concerns such as small sample size, weak baselines, missing ablations, or unclear evaluation setup.
-
-4. **Multi-format ingestion**
+3. **Multi-format ingestion**
    - Support arXiv URLs, DOI links, and reference lists in addition to PDF uploads.
 
-5. **Continuous discovery watches**
+4. **Continuous discovery watches**
    - Save topics and re-check periodically for new candidate papers with change alerts.
+
+5. **Team collaboration mode**
+   - Shared collections, comments, and reviewer agreement/disagreement tracking.
 
 ## Feature request template for GitHub Issue or PR
 
