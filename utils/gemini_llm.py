@@ -7,6 +7,7 @@ import threading
 import time
 from urllib import error as urlerror
 from urllib import request as urlrequest
+from collections.abc import Iterator
 
 from dotenv import load_dotenv
 
@@ -251,6 +252,108 @@ def _invoke_openai_compatible(prompt: str) -> str:
     return text
 
 
+def _invoke_gemini_stream(prompt: str) -> Iterator[str]:
+    import google.generativeai as genai
+
+    keys = _key_chain()
+    if not keys:
+        raise RuntimeError(
+            "Set GEMINI_API_KEY (and optionally GEMINI_API_KEY_ALT) in .env or .streamlit/secrets.toml"
+        )
+    model_name = _config_str("GEMINI_MODEL") or "gemini-2.0-flash"
+    min_interval_s = _config_float("GEMINI_MIN_INTERVAL_SECONDS", 4.0)
+    retry_count = _config_int("GEMINI_RETRY_COUNT", 3)
+    backoff_s = _config_float("GEMINI_RETRY_BACKOFF_SECONDS", 3.0)
+
+    last: BaseException | None = None
+    for i, api_key in enumerate(keys):
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+        for attempt in range(retry_count):
+            try:
+                _wait_for_rate_slot(min_interval_s)
+                stream = model.generate_content(prompt, stream=True)
+                seen_any = False
+                for chunk in stream:
+                    text = (getattr(chunk, "text", "") or "").strip()
+                    if not text:
+                        continue
+                    seen_any = True
+                    yield text
+                if not seen_any:
+                    raise RuntimeError("Gemini returned no usable streamed text.")
+                return
+            except Exception as e:
+                last = e
+                if not _is_quota_exceeded(e):
+                    raise
+                if attempt < retry_count - 1:
+                    time.sleep(backoff_s * (2**attempt))
+                    continue
+                if i == len(keys) - 1:
+                    raise
+    assert last is not None
+    raise last
+
+
+def _invoke_openai_compatible_stream(prompt: str) -> Iterator[str]:
+    try:
+        from openai import OpenAI
+    except Exception as err:
+        raise RuntimeError("Install `openai` package to use OPENAI provider.") from err
+
+    api_key = _config_str("OPENAI_API_KEY")
+    model = _config_str("OPENAI_MODEL")
+    if not api_key or not model:
+        raise RuntimeError("Set OPENAI_API_KEY and OPENAI_MODEL to enable OPENAI provider.")
+
+    base_url = _config_str("OPENAI_BASE_URL")
+    temperature = _config_float("OPENAI_TEMPERATURE", 1.0)
+    top_p = _config_float("OPENAI_TOP_P", 0.95)
+    max_tokens = _config_int("OPENAI_MAX_TOKENS", 4096)
+    timeout_s = _config_float("OPENAI_TIMEOUT_SECONDS", 60.0)
+    enable_thinking = _config_bool("OPENAI_ENABLE_THINKING", False)
+    reasoning_budget = _config_int("OPENAI_REASONING_BUDGET", max_tokens)
+
+    client = OpenAI(api_key=api_key, base_url=base_url or None, timeout=timeout_s)
+
+    extra_body = None
+    if enable_thinking:
+        extra_body = {
+            "chat_template_kwargs": {"enable_thinking": True},
+            "reasoning_budget": reasoning_budget,
+        }
+
+    kwargs: dict = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+        "top_p": top_p,
+        "max_tokens": max_tokens,
+        "stream": True,
+    }
+    if extra_body is not None:
+        kwargs["extra_body"] = extra_body
+
+    try:
+        stream = client.chat.completions.create(**kwargs)
+    except Exception as err:
+        raise RuntimeError(f"OPENAI provider call failed: {err}") from err
+
+    seen_any = False
+    for event in stream:
+        try:
+            piece = event.choices[0].delta.content
+        except (AttributeError, IndexError, TypeError):
+            piece = None
+        if not piece:
+            continue
+        seen_any = True
+        yield piece
+    if not seen_any:
+        raise RuntimeError("OPENAI provider returned no streamed text.")
+
+
 def invoke_gemini_prompt(prompt: str) -> str:
     provider = (_config_str("LLM_PROVIDER") or "").strip().lower()
     if provider in {"openai", "openai_compatible", "nvidia"}:
@@ -271,6 +374,34 @@ def invoke_gemini_prompt(prompt: str) -> str:
     except Exception as e:
         if _is_quota_exceeded(e) and _has_openrouter():
             return _invoke_openrouter(prompt)
+        if openrouter_error is not None:
+            raise RuntimeError(
+                f"OpenRouter failed first ({openrouter_error}); Gemini fallback also failed ({e})."
+            ) from e
+        raise
+
+
+def invoke_gemini_prompt_stream(prompt: str) -> Iterator[str]:
+    provider = (_config_str("LLM_PROVIDER") or "").strip().lower()
+    if provider in {"openai", "openai_compatible", "nvidia"}:
+        return _invoke_openai_compatible_stream(prompt)
+    if provider == "gemini":
+        return _invoke_gemini_stream(prompt)
+    if provider == "openrouter":
+        # OpenRouter non-streaming fallback keeps UX responsive without hard failure.
+        return iter([_invoke_openrouter(prompt)])
+
+    openrouter_error: Exception | None = None
+    if _has_openrouter():
+        try:
+            return iter([_invoke_openrouter(prompt)])
+        except Exception as e:
+            openrouter_error = e
+    try:
+        return _invoke_gemini_stream(prompt)
+    except Exception as e:
+        if _is_quota_exceeded(e) and _has_openrouter():
+            return iter([_invoke_openrouter(prompt)])
         if openrouter_error is not None:
             raise RuntimeError(
                 f"OpenRouter failed first ({openrouter_error}); Gemini fallback also failed ({e})."

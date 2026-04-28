@@ -5,10 +5,11 @@ load_dotenv()
 import streamlit as st
 from html import escape
 from typing import Any
+from collections.abc import Iterator
 from utils.pdf_reader import extract_text_from_pdf
 from utils.trace_store import persist_pipeline_run
 from utils.trace_flowchart import build_trace_flowchart_dot
-from utils.gemini_llm import invoke_gemini_prompt
+from utils.gemini_llm import invoke_gemini_prompt, invoke_gemini_prompt_stream
 from paper_graph.pipeline import pipeline, discovery_pipeline
 from paper_graph.trace import trace_step_title
 
@@ -368,6 +369,39 @@ def _answer_paper_chat(
     except Exception as e:
         return (
             _deterministic_chat_answer(question, docs),
+            False,
+            f"llm_error: {str(e)}",
+        )
+
+
+def _answer_paper_chat_stream(
+    question: str,
+    docs: list[dict[str, str]],
+    focus: str,
+    llm_enabled: bool,
+) -> tuple[Iterator[str], bool, str]:
+    if not llm_enabled:
+        return (
+            iter([_deterministic_chat_answer(question, docs)]),
+            False,
+            "llm_disabled: chat fallback used",
+        )
+    context_block = "\n\n".join(
+        f"SOURCE: {d['source']}\nTEXT:\n{d['text'][:2200]}" for d in docs
+    )
+    prompt = (
+        "You are a research assistant. Answer only from provided sources.\n"
+        "If evidence is missing, say: 'Insufficient evidence.'\n"
+        "Include a final 'Citations:' section with [SOURCE] anchors.\n\n"
+        f"Research focus:\n{focus or 'N/A'}\n\n"
+        f"Question:\n{question}\n\n"
+        f"Sources:\n{context_block}\n"
+    )
+    try:
+        return (invoke_gemini_prompt_stream(prompt), True, "")
+    except Exception as e:
+        return (
+            iter([_deterministic_chat_answer(question, docs)]),
             False,
             f"llm_error: {str(e)}",
         )
@@ -1310,14 +1344,28 @@ if all_chat_docs:
             with st.chat_message("user"):
                 st.markdown(user_q)
             with st.chat_message("assistant"):
-                answer, llm_used_chat, fallback = _answer_paper_chat(
+                status_line = st.empty()
+                status_line.caption(":material/schedule: Preparing grounded answer...")
+                stream_iter, llm_used_chat, fallback = _answer_paper_chat_stream(
                     user_q,
                     selected_docs,
                     focus,
                     bool(st.session_state.get("llm_enabled", True)),
                 )
+                status_line.caption(":material/sync: Generating response...")
+                answer = st.write_stream(stream_iter)
+                if not isinstance(answer, str):
+                    answer = str(answer or "").strip()
+                if not answer:
+                    answer, llm_used_chat, fallback = _answer_paper_chat(
+                        user_q,
+                        selected_docs,
+                        focus,
+                        bool(st.session_state.get("llm_enabled", True)),
+                    )
+                    st.markdown(answer)
                 meta = "LLM used" if llm_used_chat else (fallback or "deterministic fallback")
-                st.markdown(answer)
+                status_line.caption(":material/check_circle: Response ready")
                 st.caption(meta)
             messages.append({"role": "assistant", "content": answer, "meta": meta})
             st.session_state[chat_key] = messages
